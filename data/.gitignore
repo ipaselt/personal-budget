@@ -1,0 +1,3 @@
+# Never commit the local database — it holds your financial data and Plaid access tokens.
+*
+!.gitignore

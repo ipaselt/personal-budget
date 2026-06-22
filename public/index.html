@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Personal Budget</title>
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+</head>
+<body>
+  <header>
+    <div class="title">
+      <h1>Personal Budget</h1>
+      <span id="env-badge" class="badge">…</span>
+    </div>
+    <div class="actions">
+      <span id="institutions" class="muted"></span>
+      <button id="sync-btn" class="secondary" hidden>Sync</button>
+      <button id="connect-btn" hidden>Connect a bank</button>
+    </div>
+  </header>
+
+  <div id="banner" class="banner" hidden></div>
+
+  <nav id="tabs" class="tabs" hidden></nav>
+
+  <main>
+    <!-- OVERVIEW (all-time) -->
+    <section id="view-overview" class="view" hidden>
+      <div class="balance-cards">
+        <div class="card cash">
+          <span class="card-label">Cash on hand</span>
+          <span id="cash-balance" class="card-value">$0</span>
+          <span class="card-sub muted small">checking + cash</span>
+        </div>
+        <div class="card stash">
+          <span class="card-label">Stash (savings + investments)</span>
+          <span id="stash-balance" class="card-value">$0</span>
+          <span class="card-sub muted small">savings + money market + investments</span>
+        </div>
+      </div>
+
+      <div class="grid">
+        <div class="panel">
+          <h2>Where your income has gone (all-time)</h2>
+          <div class="chart-wrap"><canvas id="overview-chart"></canvas></div>
+          <ul id="overview-legend" class="legend"></ul>
+        </div>
+        <div class="panel">
+          <h2>Accounts</h2>
+          <ul id="accounts" class="accounts"></ul>
+        </div>
+      </div>
+
+      <div class="panel wide">
+        <h2>Recent transactions</h2>
+        <table>
+          <thead><tr><th>Date</th><th>Description</th><th>Category</th><th class="num">Amount</th></tr></thead>
+          <tbody id="overview-txn-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ONE MONTH -->
+    <section id="view-month" class="view" hidden>
+      <div class="grid">
+        <div class="panel">
+          <h2 id="month-budget-title">Budget by category</h2>
+          <table id="budget-table">
+            <thead><tr><th>Category</th><th>Budget</th><th class="num">Spent</th></tr></thead>
+            <tbody id="month-budget-body"></tbody>
+            <tfoot id="month-budget-foot"></tfoot>
+          </table>
+          <p class="muted small">Type a monthly limit to set a budget (applies to every month). Spent turns red when you're over.</p>
+        </div>
+        <div class="panel">
+          <h2 id="month-pie-title">This month</h2>
+          <div class="chart-wrap"><canvas id="month-chart"></canvas></div>
+          <ul id="month-legend" class="legend"></ul>
+        </div>
+      </div>
+
+      <div class="panel wide">
+        <h2 id="month-txn-title">Transactions</h2>
+        <table>
+          <thead><tr><th>Date</th><th>Description</th><th>Category</th><th class="num">Amount</th></tr></thead>
+          <tbody id="month-txn-body"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
