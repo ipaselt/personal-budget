@@ -1,8 +1,6 @@
 const $ = (id) => document.getElementById(id);
 const money = (n) =>
   (n < 0 ? '-' : '') + '$' + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const prettyCategory = (c) =>
-  (c || '').toLowerCase().replace(/_/g, ' ').replace(/\b\w/g, (m) => m.toUpperCase());
 const monthLabel = (m) => {
   const [y, mo] = m.split('-');
   return new Date(Number(y), Number(mo) - 1, 1).toLocaleString('en-US', { month: 'short', year: 'numeric' });
@@ -13,8 +11,10 @@ const PIE = [
   { key: 'savings', label: 'Savings', color: '#4f9cf9' },
   { key: 'leftover', label: 'Leftover', color: '#3fb950' },
 ];
+const PAGE_SIZE = 10;
 
 const charts = {};
+const txnState = {}; // tbodyId -> { txns, page, pagerId }
 let active = 'overview'; // 'overview' or a 'YYYY-MM' string
 
 async function api(path, opts) {
@@ -73,7 +73,7 @@ async function sync() {
   }
 }
 
-// --- Shared renderers ------------------------------------------------------
+// --- Pie -------------------------------------------------------------------
 function renderPie(canvasId, legendId, totals) {
   const slices = PIE.map((s) => ({ ...s, value: totals[s.key] || 0 })).filter((s) => s.value > 0);
   const ctx = $(canvasId);
@@ -92,38 +92,82 @@ function renderPie(canvasId, legendId, totals) {
       labels: slices.map((s) => s.label),
       datasets: [{ data: slices.map((s) => s.value), backgroundColor: slices.map((s) => s.color) }],
     },
-    options: { plugins: { legend: { display: false } } },
+    options: {
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: (c) => ` ${c.label}: ${money(c.parsed)}` } },
+      },
+    },
   });
 
   legend.innerHTML =
-    `<li class="legend-total">Income <strong>${money(totals.income || 0)}</strong></li>` +
+    `<li class="legend-total"><span class="legend-name"><span class="dot" style="background:transparent"></span>Income</span><strong>${money(totals.income || 0)}</strong></li>` +
     PIE.map(
       (s) =>
-        `<li><span class="dot" style="background:${s.color}"></span>${s.label}
-         <strong>${money(totals[s.key] || 0)}</strong></li>`
+        `<li><span class="legend-name"><span class="dot" style="background:${s.color}"></span>${s.label}</span><strong>${money(totals[s.key] || 0)}</strong></li>`
     ).join('');
 }
 
-function renderTransactions(tbodyId, txns) {
+// --- Transactions (paginated, 10/page) -------------------------------------
+function txnRowHtml(t) {
+  const isIn = t.amount < 0; // money coming in
+  return `
+    <td class="muted">${t.date}</td>
+    <td>${t.merchant_name || t.name}${t.pending ? ' <span class="pending">pending</span>' : ''}</td>
+    <td class="muted small">${t.effective_category}</td>
+    <td class="num ${isIn ? 'positive' : 'negative'}">${isIn ? '+' : '-'}${money(Math.abs(t.amount))}</td>`;
+}
+
+function renderTransactions(tbodyId, pagerId, txns) {
+  txnState[tbodyId] = { txns, page: 1, pagerId };
+  drawTxnPage(tbodyId);
+}
+
+function drawTxnPage(tbodyId) {
+  const st = txnState[tbodyId];
+  const total = st.txns.length;
+  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  if (st.page > pages) st.page = pages;
+
+  const start = (st.page - 1) * PAGE_SIZE;
+  const slice = st.txns.slice(start, start + PAGE_SIZE);
   const body = $(tbodyId);
-  body.innerHTML = '';
-  if (!txns.length) {
-    body.innerHTML = '<tr><td colspan="4" class="muted">No transactions.</td></tr>';
+  body.innerHTML = total
+    ? slice.map((t) => `<tr>${txnRowHtml(t)}</tr>`).join('')
+    : '<tr><td colspan="4" class="muted">No transactions.</td></tr>';
+
+  const pager = $(st.pagerId);
+  if (!pager) return;
+  if (total <= PAGE_SIZE) {
+    pager.innerHTML = '';
     return;
   }
-  for (const t of txns.slice(0, 100)) {
-    const tr = document.createElement('tr');
-    const isIn = t.amount < 0;
-    tr.innerHTML = `
-      <td class="muted">${t.date}</td>
-      <td>${t.merchant_name || t.name}${t.pending ? ' <span class="pending">pending</span>' : ''}</td>
-      <td class="muted small">${t.effective_category}</td>
-      <td class="num ${isIn ? 'positive' : ''}">${isIn ? '+' : ''}${money(Math.abs(t.amount))}</td>`;
-    body.appendChild(tr);
+  pager.innerHTML =
+    `<button class="pg-btn" data-dir="-1" ${st.page <= 1 ? 'disabled' : ''}>‹ Prev</button>` +
+    `<span class="muted small">Page ${st.page} of ${pages}</span>` +
+    `<button class="pg-btn" data-dir="1" ${st.page >= pages ? 'disabled' : ''}>Next ›</button>`;
+  pager.querySelectorAll('.pg-btn').forEach((b) =>
+    b.addEventListener('click', () => {
+      st.page += Number(b.dataset.dir);
+      drawTxnPage(tbodyId);
+    })
+  );
+}
+
+// --- Overview (all-time) ---------------------------------------------------
+async function saveBudget(input) {
+  try {
+    await api('/api/budget', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ category: input.dataset.cat, monthly_limit: input.value }),
+    });
+    await refresh();
+  } catch (e) {
+    showBanner('Could not save budget: ' + e.message, 'error');
   }
 }
 
-// --- Overview --------------------------------------------------------------
 function renderOverview(o) {
   $('view-overview').hidden = false;
   $('view-month').hidden = true;
@@ -132,19 +176,24 @@ function renderOverview(o) {
   $('stash-balance').textContent = money(o.stash);
   renderPie('overview-chart', 'overview-legend', o);
 
-  const ul = $('accounts');
-  ul.innerHTML = '';
-  if (!o.accounts.length) ul.innerHTML = '<li class="muted">No accounts yet.</li>';
-  for (const a of o.accounts) {
-    const li = document.createElement('li');
-    li.innerHTML = `
-      <span>${a.name}${a.mask ? ` ••${a.mask}` : ''}
-        <span class="muted small">${prettyCategory(a.subtype || a.type || '')}</span></span>
-      <strong>${money(a.current_balance ?? 0)}</strong>`;
-    ul.appendChild(li);
-  }
+  // Editable budget table — the single source of truth for budgets.
+  $('overview-budget-body').innerHTML = o.categories
+    .map(
+      (row) => `
+      <tr>
+        <td>${row.category}</td>
+        <td class="num"><input class="limit-input" type="number" min="0" step="10"
+          value="${row.limit ?? ''}" data-cat="${row.category}" placeholder="—" /></td>
+      </tr>`
+    )
+    .join('');
+  $('overview-budget-body')
+    .querySelectorAll('.limit-input')
+    .forEach((input) => input.addEventListener('change', () => saveBudget(input)));
 
-  renderTransactions('overview-txn-body', o.recentTransactions);
+  const totalBudget = o.categories.reduce((s, r) => s + (r.limit || 0), 0);
+  $('overview-budget-foot').innerHTML =
+    `<tr class="total-row"><td>Total</td><td class="num">${money(totalBudget)}</td></tr>`;
 }
 
 // --- One month -------------------------------------------------------------
@@ -155,44 +204,37 @@ function renderMonth(m) {
   $('month-budget-title').textContent = `Budget by category — ${monthLabel(m.month)}`;
   $('month-pie-title').textContent = `${monthLabel(m.month)} breakdown`;
 
-  const body = $('month-budget-body');
-  body.innerHTML = '';
-  for (const row of m.categories) {
-    const tr = document.createElement('tr');
-    const over = row.limit != null && row.spent > row.limit;
-    tr.innerHTML = `
-      <td>${row.category}</td>
-      <td><input class="limit-input" type="number" min="0" step="10"
-           value="${row.limit ?? ''}" data-cat="${row.category}" placeholder="—" /></td>
-      <td class="num ${over ? 'over-text' : ''}">${money(row.spent)}</td>`;
-    body.appendChild(tr);
-  }
-  body.querySelectorAll('.limit-input').forEach((input) => {
-    input.addEventListener('change', async () => {
-      try {
-        await api('/api/budget', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ category: input.dataset.cat, monthly_limit: input.value }),
-        });
-        await refresh(); // budgets are recurring → reflect everywhere
-      } catch (e) {
-        showBanner('Could not save budget: ' + e.message, 'error');
-      }
-    });
-  });
+  // Income earned this month, then the (read-only) budget rows below it.
+  const incomeRow = `
+      <tr class="income-row">
+        <td>Income</td>
+        <td class="num">—</td>
+        <td class="num positive">+${money(m.income)}</td>
+      </tr>`;
+  $('month-budget-body').innerHTML =
+    incomeRow +
+    m.categories
+      .map((row) => {
+        const over = row.limit != null && row.spent > row.limit;
+        return `
+      <tr>
+        <td>${row.category}</td>
+        <td class="num">${row.limit != null ? money(row.limit) : '—'}</td>
+        <td class="num ${over ? 'over-text' : ''}">${money(row.spent)}</td>
+      </tr>`;
+      })
+      .join('');
 
-  // Column totals
   const totalBudget = m.categories.reduce((s, r) => s + (r.limit || 0), 0);
   const totalSpent = m.categories.reduce((s, r) => s + r.spent, 0);
   $('month-budget-foot').innerHTML =
-    `<tr class="total-row"><td>Total</td><td>${money(totalBudget)}</td>` +
+    `<tr class="total-row"><td>Total</td><td class="num">${money(totalBudget)}</td>` +
     `<td class="num">${money(totalSpent)}</td></tr>`;
 
   renderPie('month-chart', 'month-legend', m);
 
   $('month-txn-title').textContent = `Transactions — ${monthLabel(m.month)}`;
-  renderTransactions('month-txn-body', m.transactions);
+  renderTransactions('month-txn-body', 'month-pager', m.transactions);
 }
 
 // --- Tabs + boot -----------------------------------------------------------

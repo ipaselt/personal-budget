@@ -270,6 +270,10 @@ app.get('/api/overview', (req, res) => {
       a.type === 'investment'
   );
 
+  const budgets = Object.fromEntries(
+    stmt.listBudgets.all().map((b) => [b.category, b.monthly_limit])
+  );
+
   res.json({
     income: round2(t.income),
     spending: round2(t.spending),
@@ -278,10 +282,7 @@ app.get('/api/overview', (req, res) => {
     cash: round2(cash),
     stash: round2(stash),
     months: stmt.distinctMonths.all().map((r) => r.month),
-    accounts,
-    recentTransactions: stmt.recentTxns
-      .all(15)
-      .map((x) => ({ ...x, effective_category: displayCategory(x) })),
+    categories: EXPENSE_BUCKETS.map((b) => ({ category: b, limit: budgets[b] ?? null })),
   });
 });
 

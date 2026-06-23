@@ -48,18 +48,16 @@
           <ul id="overview-legend" class="legend"></ul>
         </div>
         <div class="panel">
-          <h2>Accounts</h2>
-          <ul id="accounts" class="accounts"></ul>
+          <h2>Monthly budget</h2>
+          <table id="overview-budget-table">
+            <thead><tr><th>Category</th><th class="num">Budget</th></tr></thead>
+            <tbody id="overview-budget-body"></tbody>
+            <tfoot id="overview-budget-foot"></tfoot>
+          </table>
+          <p class="muted small">Set your monthly budget here — these values apply to every month's tab.</p>
         </div>
       </div>
 
-      <div class="panel wide">
-        <h2>Recent transactions</h2>
-        <table>
-          <thead><tr><th>Date</th><th>Description</th><th>Category</th><th class="num">Amount</th></tr></thead>
-          <tbody id="overview-txn-body"></tbody>
-        </table>
-      </div>
     </section>
 
     <!-- ONE MONTH -->
@@ -68,11 +66,11 @@
         <div class="panel">
           <h2 id="month-budget-title">Budget by category</h2>
           <table id="budget-table">
-            <thead><tr><th>Category</th><th>Budget</th><th class="num">Spent</th></tr></thead>
+            <thead><tr><th>Category</th><th class="num">Budget</th><th class="num">Spent</th></tr></thead>
             <tbody id="month-budget-body"></tbody>
             <tfoot id="month-budget-foot"></tfoot>
           </table>
-          <p class="muted small">Type a monthly limit to set a budget (applies to every month). Spent turns red when you're over.</p>
+          <p class="muted small">Budgets are set on the <strong>Overview</strong> tab. Spent turns red when you're over.</p>
         </div>
         <div class="panel">
           <h2 id="month-pie-title">This month</h2>
@@ -87,6 +85,7 @@
           <thead><tr><th>Date</th><th>Description</th><th>Category</th><th class="num">Amount</th></tr></thead>
           <tbody id="month-txn-body"></tbody>
         </table>
+        <div class="pager" id="month-pager"></div>
       </div>
     </section>
   </main>

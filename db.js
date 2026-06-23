@@ -94,9 +94,6 @@ export const stmt = {
   distinctMonths: db.prepare(
     `SELECT DISTINCT substr(date, 1, 7) AS month FROM transactions ORDER BY month DESC`
   ),
-  recentTxns: db.prepare(
-    `SELECT * FROM transactions ORDER BY date DESC, transaction_id LIMIT ?`
-  ),
   setUserCategory: db.prepare(
     `UPDATE transactions SET user_category = ? WHERE transaction_id = ?`
   ),
