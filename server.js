@@ -1,17 +1,16 @@
 import 'dotenv/config';
 import express from 'express';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { Products, CountryCode } from 'plaid';
-import { plaid, plaidConfigured, plaidEnv } from './plaid.js';
-import { db, stmt, inTransaction } from './db.js';
+import { stmt, inTransaction } from './db.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
 app.use(express.json());
 app.use(express.static(join(__dirname, 'public')));
 
-// The budget categories the user tracks against, in display order.
+// The budget categories tracked against, in display order.
 const EXPENSE_BUCKETS = [
   'Housing (Rent/Mortgage)',
   'Utilities',
@@ -29,217 +28,192 @@ const EXPENSE_BUCKETS = [
   'Debt Payments',
   'Miscellaneous',
 ];
-// Savings transfers are tracked as their own bucket but are NOT counted as
-// consumption spending (so moving money to savings doesn't look like a cost).
 const SAVINGS_BUCKET = 'Savings/Investing';
 
-// Map a Plaid transaction's category to one of the buckets above.
-// Uses Plaid's `detailed` category where it adds precision, else the primary.
-// Returns null for things that are not real spending (internal transfers,
-// credit-card payments) so they don't get counted or double-counted.
-function mapToBucket(detailed, primary) {
-  const d = detailed || '';
-  const p = primary || '';
+// Keyword → category rules, checked in order (specific before general).
+// 'Income' and 'Transfer' are not spending buckets — they're handled separately.
+// Edit freely; anything unmatched falls back to Income (inflow) or Miscellaneous (outflow).
+const RULES = [
+  ['Income', ['PAYROLL', 'DIRECT DEP', 'DIRECT DEPOSIT', 'SALARY', 'PAYCHECK', 'GUSTO', 'INTEREST', 'DIVIDEND', 'TAX REF', 'IRS TREAS', 'SSA', 'PENSION']],
+  // Savings before Transfer so "TRANSFER TO SAVINGS" lands in Savings, not the generic Transfer bucket.
+  ['Savings/Investing', ['SAVINGS', 'TO S0001', 'S0001', 'VANGUARD', 'FIDELITY', 'SCHWAB', 'ROBINHOOD', 'ACORNS', 'WEALTHFRONT', 'BETTERMENT', '401K', 'ROTH', ' IRA', 'BROKERAGE', 'COINBASE', 'INVEST']],
+  ['Transfer', ['TRANSFER TO', 'TRANSFER FROM', 'XFER', 'ATM', 'CASH WITHDRAWAL', 'ONLINE BANKING', 'TO SHARE', 'FROM SHARE', 'OVERDRAFT', 'INTERNAL']],
+  ['Debt Payments', ['STUDENT LOAN', 'CARD PAYMENT', 'CREDIT CARD', 'CC PAYMENT', 'PAYMENT THANK', 'DISCOVER E-PAY', 'CHASE CREDIT', 'CAPITAL ONE', 'AMEX EPAYMENT', 'SOFI', 'AFFIRM', 'KLARNA', 'LOAN PMT', 'LOAN PAYMENT']],
+  ['Housing (Rent/Mortgage)', ['RENT', 'MORTGAGE', 'HOA', 'PROPERTY MGMT', 'APARTMENT', 'LANDLORD', 'LEASING', 'ZILLOW']],
+  ['Utilities', ['ELECTRIC', 'NATURAL GAS', 'GAS COMPANY', 'GAS UTILITY', 'UTILITY', 'UTILITIES', 'WATER', 'SEWER', 'PG&E', 'PGE', 'CON ED', 'CONED', 'DUKE ENERGY', 'NATIONAL GRID', 'PSE&G', 'PECO', 'DOMINION', 'WASTE', 'GARBAGE']],
+  ['Phone/Internet', ['VERIZON', 'AT&T', 'T-MOBILE', 'TMOBILE', 'SPRINT', 'COMCAST', 'XFINITY', 'SPECTRUM', 'COX COMM', 'CENTURYLINK', 'GOOGLE FI', 'INTERNET', 'WIRELESS']],
+  ['Insurance', ['INSURANCE', 'GEICO', 'STATE FARM', 'PROGRESSIVE', 'ALLSTATE', 'LIBERTY MUTUAL', 'NATIONWIDE', 'USAA', 'METLIFE', 'AETNA', 'CIGNA', 'BLUE CROSS', 'INS PREM']],
+  ['Subscriptions', ['NETFLIX', 'SPOTIFY', 'HULU', 'DISNEY', 'HBO', 'YOUTUBE PREMIUM', 'PRIME VIDEO', 'AMAZON PRIME', 'PARAMOUNT', 'PEACOCK', 'AUDIBLE', 'PATREON', 'ADOBE', 'OPENAI', 'CHATGPT', 'ICLOUD', 'DROPBOX', 'NYTIMES', 'SUBSTACK', 'APPLE.COM/BILL']],
+  ['Groceries', ['GROCERY', 'SAFEWAY', 'TRADER JOE', 'WHOLE FOODS', 'KROGER', 'ALDI', 'PUBLIX', 'WEGMANS', 'FOOD LION', 'HARRIS TEETER', 'SHOPRITE', 'STOP & SHOP', 'SPROUTS', 'HEB', 'MEIJER', 'WINCO']],
+  ['Dining Out', ['UBER EATS', 'DOORDASH', 'GRUBHUB', 'SEAMLESS', 'POSTMATES', 'RESTAURANT', 'MCDONALD', 'STARBUCKS', 'CHIPOTLE', 'KFC', 'BURGER', 'PIZZA', 'TACO', 'CAFE', 'COFFEE', 'DUNKIN', 'PANERA', 'CHICK-FIL-A', 'WENDY', 'SUBWAY', 'GRILL', 'DINER', 'BREWING', 'SHAKE SHACK', 'FIVE GUYS', 'WAWA', 'HANDEL', 'CAVA', 'POUR RICHARD', 'TREDICI']],
+  ['Transportation/Gas', ['UBER', 'LYFT', 'SHELL', 'CHEVRON', 'EXXON', 'GULF OIL', 'GULF', 'SUNOCO', 'VALERO', 'ARCO', 'GAS', 'FUEL', 'PARKING', 'TOLL', 'EZPASS', 'TRANSIT', 'SEPTA', 'AMTRAK', 'METRO', 'AIRLINE', 'GASOLINE']],
+  ['Health/Medical', ['PHARMACY', 'CVS', 'WALGREENS', 'RITE AID', 'DOCTOR', 'MEDICAL', 'HOSPITAL', 'CLINIC', 'DENTAL', 'DENTIST', 'OPTOMETRY', 'LABCORP', 'QUEST DIAG', 'COPAY', 'URGENT CARE']],
+  ['Personal Care', ['SALON', 'BARBER', 'SPA', 'NAIL', 'HAIR', 'GYM', 'FITNESS', 'PLANET FIT', 'LA FITNESS', 'EQUINOX', 'CRUNCH', 'MASSAGE', 'SEPHORA', 'ULTA', 'NATHAN AND SONS']],
+  ['Entertainment', ['MOVIE', 'CINEMA', 'AMC', 'REGAL', 'THEATER', 'STEAM', 'PLAYSTATION', 'XBOX', 'NINTENDO', 'CONCERT', 'TICKETMASTER', 'STUBHUB', 'GOLF', 'GLF*', 'LANDISCREEK', 'LANDIS CREEK', 'BOGEYS', 'BIRDIES', 'BOWLING', 'MUSEUM', 'SIX FLAGS', 'EVENTBRITE', 'TWITCH']],
+  ['Shopping', ['AMAZON', 'AMZN', 'TARGET', 'WALMART', 'COSTCO', 'BEST BUY', 'EBAY', 'ETSY', 'MACY', 'NORDSTROM', 'NIKE', 'IKEA', 'HOME DEPOT', 'LOWES', 'WAYFAIR', 'MARSHALLS', 'TJ MAXX', 'OLD NAVY', 'H&M', 'ZARA', 'SHEIN', 'STAPLES']],
+];
 
-  if (d === 'RENT_AND_UTILITIES_RENT' || d === 'LOAN_PAYMENTS_MORTGAGE_PAYMENT') return 'Housing (Rent/Mortgage)';
-  if (p === 'HOME_IMPROVEMENT') return 'Housing (Rent/Mortgage)';
-  if (d === 'RENT_AND_UTILITIES_TELEPHONE' || d === 'RENT_AND_UTILITIES_INTERNET_AND_CABLE') return 'Phone/Internet';
-  if (p === 'RENT_AND_UTILITIES') return 'Utilities';
-
-  if (d === 'FOOD_AND_DRINK_GROCERIES') return 'Groceries';
-  if (p === 'FOOD_AND_DRINK') return 'Dining Out';
-
-  if (p === 'TRANSPORTATION') return 'Transportation/Gas';
-  if (d === 'GENERAL_SERVICES_INSURANCE') return 'Insurance';
-
-  if (d === 'ENTERTAINMENT_TV_AND_MOVIES' || d === 'ENTERTAINMENT_MUSIC_AND_AUDIO') return 'Subscriptions';
-  if (p === 'MEDICAL') return 'Health/Medical';
-  if (p === 'PERSONAL_CARE') return 'Personal Care';
-  if (p === 'ENTERTAINMENT' || p === 'TRAVEL') return 'Entertainment';
-  if (p === 'GENERAL_MERCHANDISE') return 'Shopping';
-
-  if (d === 'TRANSFER_OUT_SAVINGS' || d === 'TRANSFER_OUT_INVESTMENT_AND_RETIREMENT_FUNDS') return SAVINGS_BUCKET;
-
-  // Credit-card payments and pure transfers move money you've already
-  // categorized (or between your own accounts) — don't count them.
-  if (d === 'LOAN_PAYMENTS_CREDIT_CARD_PAYMENT') return null;
-  if (p === 'LOAN_PAYMENTS') return 'Debt Payments';
-  if (p === 'TRANSFER_OUT' || p === 'TRANSFER_IN') return null;
-
-  if (p === 'BANK_FEES' || p === 'GENERAL_SERVICES' || p === 'GOVERNMENT_AND_NON_PROFIT') return 'Miscellaneous';
-  return 'Miscellaneous';
+export function categorize(description, isInflow) {
+  const d = (description || '').toUpperCase();
+  for (const [bucket, keys] of RULES) {
+    for (const k of keys) if (d.includes(k)) return bucket;
+  }
+  return isInflow ? 'Income' : 'Miscellaneous';
 }
 
-const currentMonth = () => new Date().toISOString().slice(0, 7); // "YYYY-MM"
-
-// The category shown for a transaction in the list (override wins).
-function displayCategory(t) {
-  if (t.user_category) return t.user_category;
-  if (t.category === 'INCOME') return 'Income';
-  if (t.category === 'TRANSFER_IN') return 'Transfer';
-  return mapToBucket(t.detailed, t.category) || 'Transfer';
+// --- CSV parsing -----------------------------------------------------------
+// Minimal RFC-4180-ish parser: handles quoted fields, embedded commas, and "" escapes.
+function parseCSV(text) {
+  const rows = [];
+  let row = [], field = '', inQuotes = false;
+  const s = String(text).replace(/\r\n?/g, '\n');
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (inQuotes) {
+      if (c === '"') {
+        if (s[i + 1] === '"') { field += '"'; i++; }
+        else inQuotes = false;
+      } else field += c;
+    } else if (c === '"') inQuotes = true;
+    else if (c === ',') { row.push(field); field = ''; }
+    else if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; }
+    else field += c;
+  }
+  if (field.length || row.length) { row.push(field); rows.push(row); }
+  return rows;
 }
 
-// Reduce a set of transactions to income / spending / savings + per-bucket spend.
+const num = (v) => {
+  if (v == null) return 0;
+  let s = String(v).trim().replace(/[$,\s]/g, '');
+  let neg = false;
+  if (/^\(.*\)$/.test(s)) { neg = true; s = s.slice(1, -1); } // (50.00) = -50
+  const n = parseFloat(s);
+  return isFinite(n) ? (neg ? -n : n) : 0;
+};
+
+function parseDate(v) {
+  const s = String(v || '').trim();
+  let m;
+  if ((m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/)))
+    return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`;
+  if ((m = s.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})/))) {
+    let [, mo, da, yr] = m;
+    if (yr.length === 2) yr = '20' + yr;
+    return `${yr}-${mo.padStart(2, '0')}-${da.padStart(2, '0')}`;
+  }
+  return null;
+}
+
+const round2 = (n) => Math.round(n * 100) / 100;
+const currentMonth = () => new Date().toISOString().slice(0, 7);
+const displayCategory = (t) => t.user_category || t.category || 'Miscellaneous';
+
+// Reduce transactions to income / spending / savings + per-bucket spend.
 function computeTotals(txns) {
   let income = 0, spending = 0;
   const spentByBucket = Object.fromEntries(EXPENSE_BUCKETS.map((b) => [b, 0]));
   for (const t of txns) {
-    if (t.category === 'INCOME') {
-      if (t.amount < 0) income += -t.amount; // paycheck / deposit (inflow is negative)
+    const cat = t.user_category || t.category || 'Miscellaneous';
+    if (cat === 'Income') {
+      if (t.amount > 0) income += t.amount;
       continue;
     }
-    if (t.category === 'TRANSFER_IN') continue; // money moved in from your own accounts
-    const bucket = t.user_category || mapToBucket(t.detailed, t.category);
-    if (!bucket) continue; // transfer-out / credit-card payment — ignore (avoids double-count)
-    // amount > 0 is spending; amount < 0 is a refund that reduces the bucket.
-    spentByBucket[bucket] = (spentByBucket[bucket] || 0) + t.amount;
-    if (bucket !== SAVINGS_BUCKET) spending += t.amount; // savings isn't consumption
+    if (cat === 'Transfer') continue; // moving your own money — ignore
+    const spend = -t.amount; // outflow (negative) -> positive spend; refund (positive) reduces it
+    spentByBucket[cat] = (spentByBucket[cat] || 0) + spend;
+    if (cat !== SAVINGS_BUCKET) spending += spend;
   }
   const savings = spentByBucket[SAVINGS_BUCKET] || 0;
-  return {
-    income, spending, savings,
-    leftover: Math.max(0, income - spending - savings),
-    spentByBucket,
-  };
-}
-
-// Surface Plaid errors clearly instead of a generic 500.
-function sendPlaidError(res, err) {
-  const data = err?.response?.data;
-  console.error('Plaid error:', data || err.message);
-  res.status(400).json({
-    error: data?.error_message || err.message,
-    error_code: data?.error_code,
-  });
-}
-
-// --- Sync helpers ----------------------------------------------------------
-async function syncAccounts(accessToken, itemId) {
-  const { data } = await plaid.accountsGet({ access_token: accessToken });
-  inTransaction(() => {
-    for (const a of data.accounts) {
-      stmt.upsertAccount.run(
-        a.account_id, itemId, a.name, a.official_name ?? null,
-        a.type ?? null, a.subtype ?? null, a.mask ?? null,
-        a.balances?.current ?? null, a.balances?.available ?? null,
-        a.balances?.iso_currency_code ?? null
-      );
-    }
-  });
-  return data.item?.institution_id ?? null;
-}
-
-async function syncTransactions(itemId) {
-  const item = stmt.getItem.get(itemId);
-  if (!item) throw new Error(`Unknown item ${itemId}`);
-
-  let cursor = item.cursor || undefined;
-  const added = [], modified = [], removed = [];
-  let hasMore = true;
-
-  while (hasMore) {
-    const request = {
-      access_token: item.access_token,
-      options: { include_personal_finance_category: true },
-    };
-    if (cursor) request.cursor = cursor;
-    const { data } = await plaid.transactionsSync(request);
-    added.push(...data.added);
-    modified.push(...data.modified);
-    removed.push(...data.removed);
-    hasMore = data.has_more;
-    cursor = data.next_cursor;
-  }
-
-  inTransaction(() => {
-    for (const t of [...added, ...modified]) {
-      stmt.upsertTxn.run(
-        t.transaction_id, t.account_id, t.date, t.name,
-        t.merchant_name ?? null, t.amount,
-        t.personal_finance_category?.primary ?? 'OTHER',
-        t.personal_finance_category?.detailed ?? null,
-        t.pending ? 1 : 0
-      );
-    }
-    for (const r of removed) stmt.deleteTxn.run(r.transaction_id);
-    stmt.setCursor.run(cursor, itemId);
-  });
-
-  return { added: added.length, modified: modified.length, removed: removed.length };
+  return { income, spending, savings, leftover: Math.max(0, income - spending - savings), spentByBucket };
 }
 
 // --- API -------------------------------------------------------------------
-app.get('/api/status', (req, res) => {
-  const items = stmt.listItems.all();
-  res.json({
-    configured: plaidConfigured,
-    env: plaidEnv,
-    connected: items.length > 0,
-    institutions: items.map((i) => i.institution_name).filter(Boolean),
-  });
-});
-
-app.post('/api/create_link_token', async (req, res) => {
-  if (!plaidConfigured) {
-    return res.status(400).json({ error: 'Plaid keys are not set. Add them to .env.' });
-  }
+app.post('/api/import', express.text({ type: '*/*', limit: '15mb' }), (req, res) => {
   try {
-    const { data } = await plaid.linkTokenCreate({
-      user: { client_user_id: 'local-user' },
-      client_name: 'Personal Budget',
-      products: [Products.Transactions],
-      country_codes: [CountryCode.Us],
-      language: 'en',
+    const rows = parseCSV(req.body || '');
+    if (rows.length < 2) return res.status(400).json({ error: 'CSV has no data rows.' });
+
+    const header = rows[0].map((h) => h.trim().toLowerCase());
+    const find = (...names) => header.findIndex((h) => names.some((n) => h.includes(n)));
+    const col = {
+      account: find('account'),
+      date: find('post date', 'date'),
+      desc: find('description', 'memo', 'payee'),
+      debit: find('debit', 'withdrawal'),
+      credit: find('credit', 'deposit'),
+      amount: find('amount'),
+      balance: find('balance'),
+      status: find('status'),
+    };
+    if (col.date < 0 || col.desc < 0)
+      return res.status(400).json({ error: 'Could not find Date and Description columns in the CSV header.' });
+    if (col.debit < 0 && col.credit < 0 && col.amount < 0)
+      return res.status(400).json({ error: 'Could not find Debit/Credit or Amount columns.' });
+
+    const latestByAccount = {};
+    let imported = 0, skipped = 0;
+
+    inTransaction(() => {
+      for (let r = 1; r < rows.length; r++) {
+        const row = rows[r];
+        if (!row.length || row.every((c) => !c || !c.trim())) continue;
+
+        const date = parseDate(row[col.date]);
+        if (!date) { skipped++; continue; }
+        const desc = (row[col.desc] || '').trim();
+        const account = col.account >= 0 ? (row[col.account] || '').trim() || 'account' : 'account';
+
+        let amount;
+        if (col.debit >= 0 || col.credit >= 0) {
+          const debit = col.debit >= 0 ? Math.abs(num(row[col.debit])) : 0;
+          const credit = col.credit >= 0 ? Math.abs(num(row[col.credit])) : 0;
+          amount = credit > 0 ? credit : -debit; // + = money in, - = money out
+        } else {
+          amount = num(row[col.amount]); // negative = outflow
+        }
+        if (amount === 0) { skipped++; continue; }
+
+        const balance = col.balance >= 0 ? num(row[col.balance]) : null;
+        const pending = col.status >= 0 && /pending/i.test(row[col.status] || '') ? 1 : 0;
+        const category = categorize(desc, amount > 0);
+
+        const id = createHash('sha1')
+          .update([account, date, desc, amount, balance].join('|'))
+          .digest('hex')
+          .slice(0, 16);
+
+        stmt.upsertTxn.run(id, account, date, desc, amount, category, balance, pending);
+        imported++;
+
+        if (balance != null) {
+          const prev = latestByAccount[account];
+          if (!prev || date >= prev.date) latestByAccount[account] = { date, balance };
+        }
+      }
+      for (const [account, info] of Object.entries(latestByAccount)) {
+        stmt.upsertAccount.run(account, info.balance, info.date);
+      }
     });
-    res.json({ link_token: data.link_token });
+
+    res.json({ ok: true, imported, skipped });
   } catch (err) {
-    sendPlaidError(res, err);
+    console.error('Import error:', err);
+    res.status(400).json({ error: 'Could not parse CSV: ' + err.message });
   }
 });
 
-app.post('/api/exchange_public_token', async (req, res) => {
-  try {
-    const { public_token, institution } = req.body;
-    const { data } = await plaid.itemPublicTokenExchange({ public_token });
-    stmt.insertItem.run(data.item_id, data.access_token, institution?.name ?? null);
-    await syncAccounts(data.access_token, data.item_id);
-    const counts = await syncTransactions(data.item_id);
-    res.json({ ok: true, ...counts });
-  } catch (err) {
-    sendPlaidError(res, err);
-  }
+app.get('/api/status', (req, res) => {
+  const c = stmt.counts.get();
+  res.json({ hasData: (c.n || 0) > 0, count: c.n || 0, earliest: c.earliest, latest: c.latest });
 });
 
-app.post('/api/sync', async (req, res) => {
-  try {
-    const items = stmt.listItems.all();
-    let totals = { added: 0, modified: 0, removed: 0 };
-    for (const item of items) {
-      await syncAccounts(item.access_token, item.item_id);
-      const c = await syncTransactions(item.item_id);
-      totals.added += c.added; totals.modified += c.modified; totals.removed += c.removed;
-    }
-    res.json({ ok: true, ...totals });
-  } catch (err) {
-    sendPlaidError(res, err);
-  }
-});
-
-// Per-month budget table + totals + pie (defaults to the current month).
+// Per-month budget table + totals + donut.
 app.get('/api/summary', (req, res) => {
   const month = req.query.month || currentMonth();
   const txns = stmt.txnsForMonth.all(`${month}%`);
-  const budgets = Object.fromEntries(
-    stmt.listBudgets.all().map((b) => [b.category, b.monthly_limit])
-  );
+  const budgets = Object.fromEntries(stmt.listBudgets.all().map((b) => [b.category, b.monthly_limit]));
   const t = computeTotals(txns);
-
-  const categories = EXPENSE_BUCKETS.map((b) => ({
-    category: b,
-    spent: round2(t.spentByBucket[b] || 0),
-    limit: budgets[b] ?? null,
-  }));
 
   res.json({
     month,
@@ -247,40 +221,31 @@ app.get('/api/summary', (req, res) => {
     spending: round2(t.spending),
     savings: round2(t.savings),
     leftover: round2(t.leftover),
-    categories,
+    categories: EXPENSE_BUCKETS.map((b) => ({
+      category: b,
+      spent: round2(t.spentByBucket[b] || 0),
+      limit: budgets[b] ?? null,
+    })),
     transactions: txns.map((x) => ({ ...x, effective_category: displayCategory(x) })),
   });
 });
 
-// Landing view: all-time cumulative totals, cash/stash balances, month list,
-// and recent transactions.
+// Landing view: all-time totals, current balance, month list, budgets.
 app.get('/api/overview', (req, res) => {
   const t = computeTotals(stmt.allTxns.all());
   const accounts = stmt.listAccounts.all();
-  const sumBalance = (pred) =>
-    accounts.filter(pred).reduce((s, a) => s + (a.current_balance || 0), 0);
-  const sub = (a) => (a.subtype || '').toLowerCase();
-
-  const cash = sumBalance(
-    (a) => a.type === 'depository' && ['checking', 'cash management', 'prepaid'].includes(sub(a))
-  );
-  const stash = sumBalance(
-    (a) =>
-      (a.type === 'depository' && ['savings', 'money market', 'cd'].includes(sub(a))) ||
-      a.type === 'investment'
-  );
-
-  const budgets = Object.fromEntries(
-    stmt.listBudgets.all().map((b) => [b.category, b.monthly_limit])
-  );
+  const balance = accounts.reduce((s, a) => s + (a.current_balance || 0), 0);
+  const budgets = Object.fromEntries(stmt.listBudgets.all().map((b) => [b.category, b.monthly_limit]));
+  const c = stmt.counts.get();
 
   res.json({
     income: round2(t.income),
     spending: round2(t.spending),
     savings: round2(t.savings),
     leftover: round2(t.leftover),
-    cash: round2(cash),
-    stash: round2(stash),
+    balance: round2(balance),
+    accountCount: accounts.length,
+    latest: c.latest,
     months: stmt.distinctMonths.all().map((r) => r.month),
     categories: EXPENSE_BUCKETS.map((b) => ({ category: b, limit: budgets[b] ?? null })),
   });
@@ -304,11 +269,11 @@ app.post('/api/transaction_category', (req, res) => {
   res.json({ ok: true });
 });
 
-const round2 = (n) => Math.round(n * 100) / 100;
-
 const port = process.env.PORT || 4000;
-app.listen(port, () => {
-  console.log(`\n  Personal Budget running:  http://localhost:${port}`);
-  console.log(`  Plaid environment:        ${plaidEnv}`);
-  console.log(`  Plaid keys configured:    ${plaidConfigured ? 'yes' : 'NO — add them to .env'}\n`);
-});
+// Only start the server when run directly (so the categorizer can be imported for tests).
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  app.listen(port, () => {
+    console.log(`\n  Personal Budget running:  http://localhost:${port}`);
+    console.log(`  Data source:              CSV import (local only)\n`);
+  });
+}

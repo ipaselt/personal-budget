@@ -6,7 +6,6 @@
   <title>Personal Budget</title>
   <link rel="stylesheet" href="style.css" />
   <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 </head>
 <body>
   <header>
@@ -16,8 +15,8 @@
     </div>
     <div class="actions">
       <span id="institutions" class="muted"></span>
-      <button id="sync-btn" class="secondary" hidden>Sync</button>
-      <button id="connect-btn" hidden>Connect a bank</button>
+      <input type="file" id="csv-input" accept=".csv,text/csv" hidden />
+      <button id="import-btn">Import CSV</button>
     </div>
   </header>
 
@@ -29,22 +28,17 @@
     <!-- OVERVIEW (all-time) -->
     <section id="view-overview" class="view" hidden>
       <div class="balance-cards">
-        <div class="card cash">
-          <span class="card-label">Cash on hand</span>
-          <span id="cash-balance" class="card-value">$0</span>
-          <span class="card-sub muted small">checking + cash</span>
-        </div>
-        <div class="card stash">
-          <span class="card-label">Stash (savings + investments)</span>
-          <span id="stash-balance" class="card-value">$0</span>
-          <span class="card-sub muted small">savings + money market + investments</span>
+        <div class="card balance">
+          <span class="card-label">Current balance</span>
+          <span id="balance-value" class="card-value">$0</span>
+          <span id="balance-sub" class="card-sub muted small"></span>
         </div>
       </div>
 
       <div class="grid">
         <div class="panel">
           <h2>Where your income has gone (all-time)</h2>
-          <div class="chart-wrap"><canvas id="overview-chart"></canvas></div>
+          <div class="chart-wrap" id="overview-chart"></div>
           <ul id="overview-legend" class="legend"></ul>
         </div>
         <div class="panel">
@@ -74,7 +68,7 @@
         </div>
         <div class="panel">
           <h2 id="month-pie-title">This month</h2>
-          <div class="chart-wrap"><canvas id="month-chart"></canvas></div>
+          <div class="chart-wrap" id="month-chart"></div>
           <ul id="month-legend" class="legend"></ul>
         </div>
       </div>

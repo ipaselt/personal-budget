@@ -1,51 +1,55 @@
 # Personal Budget
 
-A local-first budget planner. It links your bank through **Plaid**, pulls your
-transactions automatically, and tracks income, spending, and savings against
-budgets you set per category. Everything runs on your own machine — your
-financial data and Plaid tokens live in a local SQLite file and are never sent
-anywhere except Plaid's API.
+A local-first budget planner. You export a **CSV** from your bank and import it;
+the app categorizes your transactions and tracks income, spending, and savings
+against budgets you set per category. Everything runs on your own machine — your
+financial data lives in a local SQLite file and is never sent anywhere. No bank
+logins, API keys, or third parties.
 
 ## Setup
 
-1. **Install dependencies** (already done if you ran it once):
+1. **Install dependencies** (once):
    ```
    npm install
    ```
-
-2. **Add your Plaid keys.** Open `.env` and paste in:
-   - `PLAID_CLIENT_ID` — your client_id
-   - `PLAID_SECRET` — your **Sandbox** secret while testing
-
-   Find both at <https://dashboard.plaid.com/developers/keys>.
-   Leave `PLAID_ENV=sandbox` for now.
-
-3. **Start the app:**
+2. **Start the app:**
    ```
    npm start
    ```
-   Open <http://localhost:4000>.
+   Open <http://localhost:4000>. (No keys or config needed.)
 
 ## Using it
 
-- Click **Connect a bank**. In Sandbox, pick any bank and log in with
-  `user_good` / `pass_good` (any MFA code works).
-- Transactions pull automatically. Click **Sync** anytime to refresh.
-- Set a monthly limit next to any category to create a budget; the progress
-  bar turns red when you go over.
+1. Download a transaction CSV from your bank's website.
+2. Click **Import CSV** and pick the file. It parses, categorizes, and populates
+   the dashboard. Re-importing the same file is safe (no duplicates) and re-runs
+   categorization — so import again whenever you have new transactions.
+3. On the **Overview** tab, set a monthly limit next to any category to create a
+   budget (these apply to every month). Each **month tab** shows that month's
+   income, spending vs. budget, a breakdown donut, and its transactions.
 
-## Going live (after Plaid Production approval)
+## Supported CSV format
 
-1. In `.env`, set `PLAID_ENV=production` and replace `PLAID_SECRET` with your
-   **Production** secret.
-2. Restart (`npm start`) and reconnect your real bank.
+Columns are auto-detected by header name. Works with separate **Debit/Credit**
+columns or a single signed **Amount** column, plus optional **Balance**,
+**Status**, and **Account** columns. Tuned for Ardent Credit Union:
+```
+Account Number, Post Date, Check, Description, Debit, Credit, Status, Balance
+```
 
-The code is identical between Sandbox and Production — only `.env` changes.
+## How categorization works
 
-## How spending is calculated
+Each transaction's description is matched against keyword rules (in `server.js`,
+the `RULES` array) and sorted into one of the budget categories — e.g.
+`TRADER JOES` → Groceries, `WAWA` → Dining Out, `GULF OIL` → Transportation.
+Anything unmatched goes to **Income** (money in) or **Miscellaneous** (money out).
+You can override any transaction's category in the app; overrides survive
+re-imports. Add new merchants to `RULES` to teach it over time.
 
-Plaid reports `amount` as positive when money leaves your account (spending)
-and negative when money comes in (income). Income excludes internal
-`TRANSFER_IN`; spending excludes internal `TRANSFER_OUT`, so moving money to
-savings doesn't look like spending. **Net = income − spending** is what you
-saved this month.
+## How the totals work
+
+Stored `amount` is **positive for money in (credit)** and **negative for money
+out (debit)**. **Income** = inflows tagged Income; **Spending** = outflow
+categories except Savings/Investing and Transfer; **Leftover** = income −
+spending − savings. **Current balance** comes from the latest Balance value in
+your CSV.

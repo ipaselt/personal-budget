@@ -7,13 +7,12 @@ const monthLabel = (m) => {
 };
 
 const PIE = [
-  { key: 'spending', label: 'Spending', color: '#f85149' },
-  { key: 'savings', label: 'Savings', color: '#4f9cf9' },
-  { key: 'leftover', label: 'Leftover', color: '#3fb950' },
+  { key: 'spending', label: 'Spending', color: '#ff6a6a' },
+  { key: 'savings', label: 'Savings', color: '#6d8cff' },
+  { key: 'leftover', label: 'Leftover', color: '#41d68a' },
 ];
 const PAGE_SIZE = 10;
 
-const charts = {};
 const txnState = {}; // tbodyId -> { txns, page, pagerId }
 let active = 'overview'; // 'overview' or a 'YYYY-MM' string
 
@@ -31,89 +30,136 @@ function showBanner(html, kind = 'info') {
   b.hidden = false;
 }
 
-// --- Plaid Link ------------------------------------------------------------
-async function connectBank() {
+// --- CSV import ------------------------------------------------------------
+async function importCsv(text, name) {
+  showBanner(`Importing ${name}…`);
   try {
-    const { link_token } = await api('/api/create_link_token', { method: 'POST' });
-    const handler = Plaid.create({
-      token: link_token,
-      onSuccess: async (public_token, metadata) => {
-        showBanner('Linking account and pulling transactions…');
-        try {
-          await api('/api/exchange_public_token', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ public_token, institution: metadata.institution }),
-          });
-          $('banner').hidden = true;
-          await refresh();
-        } catch (e) {
-          showBanner('Could not finish linking: ' + e.message, 'error');
-        }
-      },
+    const r = await api('/api/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/csv' },
+      body: text,
     });
-    handler.open();
-  } catch (e) {
-    showBanner('Could not start Plaid Link: ' + e.message, 'error');
-  }
-}
-
-async function sync() {
-  const btn = $('sync-btn');
-  btn.disabled = true;
-  btn.textContent = 'Syncing…';
-  try {
-    await api('/api/sync', { method: 'POST' });
     await refresh();
+    showBanner(
+      `Imported ${r.imported.toLocaleString()} transaction${r.imported === 1 ? '' : 's'}` +
+        (r.skipped ? ` (${r.skipped} rows skipped)` : '') + '.',
+      'info'
+    );
+    setTimeout(() => ($('banner').hidden = true), 4000);
   } catch (e) {
-    showBanner('Sync failed: ' + e.message, 'error');
-  } finally {
-    btn.disabled = false;
-    btn.textContent = 'Sync';
+    showBanner('Import failed: ' + e.message, 'error');
   }
 }
 
-// --- Pie -------------------------------------------------------------------
-function renderPie(canvasId, legendId, totals) {
-  const slices = PIE.map((s) => ({ ...s, value: totals[s.key] || 0 })).filter((s) => s.value > 0);
-  const ctx = $(canvasId);
-  if (charts[canvasId]) charts[canvasId].destroy();
-
+// --- Donut chart (animated SVG, hover-linked legend + live center) ----------
+function renderDonut(containerId, legendId, totals) {
+  const container = $(containerId);
   const legend = $(legendId);
-  if (!slices.length) {
-    ctx.style.display = 'none';
+
+  const present = PIE.map((s) => ({ ...s, value: totals[s.key] || 0 })).filter((s) => s.value > 0);
+  const total = present.reduce((a, s) => a + s.value, 0);
+
+  if (!present.length || total <= 0) {
+    container.innerHTML = '';
     legend.innerHTML = '<li class="muted small">No data yet for this period.</li>';
     return;
   }
-  ctx.style.display = 'block';
-  charts[canvasId] = new Chart(ctx, {
-    type: 'pie',
-    data: {
-      labels: slices.map((s) => s.label),
-      datasets: [{ data: slices.map((s) => s.value), backgroundColor: slices.map((s) => s.color) }],
-    },
-    options: {
-      plugins: {
-        legend: { display: false },
-        tooltip: { callbacks: { label: (c) => ` ${c.label}: ${money(c.parsed)}` } },
-      },
-    },
+
+  const size = 200;
+  const stroke = 22;
+  const r = size / 2 - stroke / 2;
+  const C = 2 * Math.PI * r;
+
+  let cum = 0;
+  const segs = present.map((s, i) => {
+    const frac = s.value / total;
+    const seg = { ...s, i, arc: frac * C, offset: (cum / total) * C, pct: frac * 100 };
+    cum += s.value;
+    return seg;
   });
+  const keyToIdx = Object.fromEntries(segs.map((s) => [s.key, s.i]));
+
+  container.innerHTML =
+    `<svg class="donut-svg" viewBox="0 0 ${size} ${size}">
+       <circle class="donut-track" cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke-width="${stroke}"></circle>
+       ${segs
+         .map(
+           (m) =>
+             `<circle class="donut-seg" data-i="${m.i}" cx="${size / 2}" cy="${size / 2}" r="${r}"
+                fill="none" stroke="${m.color}" stroke-width="${stroke}" stroke-linecap="round"
+                stroke-dasharray="${m.arc} ${C}"
+                style="stroke-dashoffset:${C}; transition: stroke-dashoffset .9s ease-out ${m.i * 0.08}s, filter .2s ease, transform .2s ease;"></circle>`
+         )
+         .join('')}
+     </svg>
+     <div class="donut-center"></div>`;
+
+  const center = container.querySelector('.donut-center');
+  const segEls = container.querySelectorAll('.donut-seg');
+
+  const showTotal = () => {
+    center.innerHTML =
+      `<span class="donut-center-label">Income</span>` +
+      `<span class="donut-center-value">${money(totals.income || 0)}</span>`;
+  };
+  const showSeg = (m) => {
+    center.innerHTML =
+      `<span class="donut-center-label">${m.label}</span>` +
+      `<span class="donut-center-value">${money(m.value)}</span>` +
+      `<span class="donut-center-pct">${Math.round(m.pct)}%</span>`;
+  };
+  showTotal();
+
+  requestAnimationFrame(() =>
+    requestAnimationFrame(() => {
+      segs.forEach((m) => (segEls[m.i].style.strokeDashoffset = `${-m.offset}`));
+    })
+  );
+
+  const highlight = (idx) => {
+    segEls.forEach((el, i) => {
+      const on = i === idx;
+      el.style.filter = on ? `drop-shadow(0 0 7px ${segs[i].color}) brightness(1.12)` : 'none';
+      el.style.transform = on ? 'scale(1.04)' : 'scale(1)';
+      el.style.opacity = idx == null || on ? '1' : '0.4';
+    });
+    if (idx != null) showSeg(segs[idx]);
+  };
+  const reset = () => {
+    segEls.forEach((el) => {
+      el.style.filter = 'none';
+      el.style.transform = 'scale(1)';
+      el.style.opacity = '1';
+    });
+    showTotal();
+  };
+
+  segEls.forEach((el) => el.addEventListener('mouseenter', () => highlight(Number(el.dataset.i))));
+  container.addEventListener('mouseleave', reset);
 
   legend.innerHTML =
     `<li class="legend-total"><span class="legend-name"><span class="dot" style="background:transparent"></span>Income</span><strong>${money(totals.income || 0)}</strong></li>` +
-    PIE.map(
-      (s) =>
-        `<li><span class="legend-name"><span class="dot" style="background:${s.color}"></span>${s.label}</span><strong>${money(totals[s.key] || 0)}</strong></li>`
-    ).join('');
+    PIE.map((s) => {
+      const idx = keyToIdx[s.key];
+      const has = idx != null;
+      return (
+        `<li class="legend-item${has ? '' : ' is-zero'}"${has ? ` data-i="${idx}"` : ''}>` +
+        `<span class="legend-name"><span class="dot" style="background:${s.color}"></span>${s.label}</span>` +
+        `<strong>${money(totals[s.key] || 0)}</strong></li>`
+      );
+    }).join('');
+  legend.querySelectorAll('.legend-item[data-i]').forEach((li) => {
+    li.addEventListener('mouseenter', () => highlight(Number(li.dataset.i)));
+    li.addEventListener('mouseleave', reset);
+  });
 }
 
 // --- Transactions (paginated, 10/page) -------------------------------------
 function txnRowHtml(t) {
-  const isIn = t.amount < 0; // money coming in
+  const isIn = t.amount > 0; // credit = money in
   return `
     <td class="muted">${t.date}</td>
-    <td>${t.merchant_name || t.name}${t.pending ? ' <span class="pending">pending</span>' : ''}</td>
+    <td>${t.name}${t.pending ? ' <span class="pending">pending</span>' : ''}</td>
     <td class="muted small">${t.effective_category}</td>
     <td class="num ${isIn ? 'positive' : 'negative'}">${isIn ? '+' : '-'}${money(Math.abs(t.amount))}</td>`;
 }
@@ -172,9 +218,11 @@ function renderOverview(o) {
   $('view-overview').hidden = false;
   $('view-month').hidden = true;
 
-  $('cash-balance').textContent = money(o.cash);
-  $('stash-balance').textContent = money(o.stash);
-  renderPie('overview-chart', 'overview-legend', o);
+  $('balance-value').textContent = money(o.balance);
+  $('balance-sub').textContent =
+    `across ${o.accountCount} account${o.accountCount === 1 ? '' : 's'}` +
+    (o.latest ? ` · as of ${o.latest}` : '');
+  renderDonut('overview-chart', 'overview-legend', o);
 
   // Editable budget table — the single source of truth for budgets.
   $('overview-budget-body').innerHTML = o.categories
@@ -204,7 +252,6 @@ function renderMonth(m) {
   $('month-budget-title').textContent = `Budget by category — ${monthLabel(m.month)}`;
   $('month-pie-title').textContent = `${monthLabel(m.month)} breakdown`;
 
-  // Income earned this month, then the (read-only) budget rows below it.
   const incomeRow = `
       <tr class="income-row">
         <td>Income</td>
@@ -231,7 +278,7 @@ function renderMonth(m) {
     `<tr class="total-row"><td>Total</td><td class="num">${money(totalBudget)}</td>` +
     `<td class="num">${money(totalSpent)}</td></tr>`;
 
-  renderPie('month-chart', 'month-legend', m);
+  renderDonut('month-chart', 'month-legend', m);
 
   $('month-txn-title').textContent = `Transactions — ${monthLabel(m.month)}`;
   renderTransactions('month-txn-body', 'month-pager', m.transactions);
@@ -252,34 +299,29 @@ function renderTabs(months) {
   );
 }
 
+function hideData() {
+  $('tabs').hidden = true;
+  $('view-overview').hidden = true;
+  $('view-month').hidden = true;
+}
+
 async function refresh() {
   const status = await api('/api/status');
-  $('env-badge').textContent = status.env;
-  $('env-badge').className = 'badge ' + (status.env === 'production' ? 'prod' : 'sandbox');
-  $('connect-btn').hidden = !status.configured;
-  $('institutions').textContent = status.institutions.join(' · ');
+  $('env-badge').textContent = 'Local';
+  $('env-badge').className = 'badge prod';
 
-  if (!status.configured) {
-    $('tabs').hidden = true;
-    $('view-overview').hidden = true;
-    $('view-month').hidden = true;
+  if (!status.hasData) {
+    hideData();
+    $('institutions').textContent = '';
     return showBanner(
-      'Add your Plaid keys to <code>.env</code> (copy from <code>.env.example</code>), then restart the server.',
-      'warn'
-    );
-  }
-  if (!status.connected) {
-    $('tabs').hidden = true;
-    $('view-overview').hidden = true;
-    $('view-month').hidden = true;
-    return showBanner(
-      'Click <strong>Connect a bank</strong> to link an account. In Sandbox, use <code>user_good</code> / <code>pass_good</code>.',
+      'Import a <strong>CSV export</strong> from your bank to get started — click <strong>Import CSV</strong> above. Your data stays on this machine.',
       'info'
     );
   }
 
+  $('institutions').textContent =
+    `${status.count.toLocaleString()} transactions · ${status.earliest} → ${status.latest}`;
   $('banner').hidden = true;
-  $('sync-btn').hidden = false;
 
   const overview = await api('/api/overview');
   if (active !== 'overview' && !overview.months.includes(active)) active = 'overview';
@@ -289,6 +331,13 @@ async function refresh() {
   else renderMonth(await api('/api/summary?month=' + active));
 }
 
-$('connect-btn').addEventListener('click', connectBank);
-$('sync-btn').addEventListener('click', sync);
+$('import-btn').addEventListener('click', () => $('csv-input').click());
+$('csv-input').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const text = await file.text();
+  e.target.value = ''; // allow re-importing the same file
+  importCsv(text, file.name);
+});
+
 refresh().catch((e) => showBanner('Error: ' + e.message, 'error'));
