@@ -35,6 +35,10 @@ db.exec(`
     category      TEXT PRIMARY KEY,
     monthly_limit REAL NOT NULL
   );
+
+  CREATE TABLE IF NOT EXISTS custom_categories (
+    name TEXT PRIMARY KEY
+  );
 `);
 
 export const stmt = {
@@ -76,6 +80,12 @@ export const stmt = {
   ),
   deleteBudget: db.prepare(`DELETE FROM budgets WHERE category = ?`),
   listBudgets: db.prepare(`SELECT * FROM budgets`),
+
+  insertCategory: db.prepare(`INSERT OR IGNORE INTO custom_categories (name) VALUES (?)`),
+  listCategories: db.prepare(`SELECT name FROM custom_categories ORDER BY rowid`),
+  deleteCategory: db.prepare(`DELETE FROM custom_categories WHERE name = ?`),
+  // revert transactions that were manually put in a (now-deleted) category
+  clearUserCategory: db.prepare(`UPDATE transactions SET user_category = NULL WHERE user_category = ?`),
 };
 
 // Run a function inside a transaction (node:sqlite has no .transaction()).

@@ -5,6 +5,12 @@ const monthLabel = (m) => {
   const [y, mo] = m.split('-');
   return new Date(Number(y), Number(mo) - 1, 1).toLocaleString('en-US', { month: 'short', year: 'numeric' });
 };
+const periodLabel = (t) => {
+  if (t === 'overview') return 'Overview';
+  if (t === 'all') return 'All Time';
+  if (/^\d{4}$/.test(t)) return t; // year
+  return monthLabel(t); // month
+};
 
 const PIE = [
   { key: 'spending', label: 'Spending', color: '#ff6a6a' },
@@ -14,6 +20,7 @@ const PIE = [
 const PAGE_SIZE = 10;
 
 const txnState = {}; // tbodyId -> { txns, page, pagerId }
+let categoryOptions = []; // assignable categories for the per-transaction dropdown
 let active = 'overview'; // 'overview' or a 'YYYY-MM' string
 
 async function api(path, opts) {
@@ -157,11 +164,27 @@ function renderDonut(containerId, legendId, totals) {
 // --- Transactions (paginated, 10/page) -------------------------------------
 function txnRowHtml(t) {
   const isIn = t.amount > 0; // credit = money in
+  const opts = categoryOptions
+    .map((c) => `<option${c === t.effective_category ? ' selected' : ''}>${c}</option>`)
+    .join('');
   return `
     <td class="muted">${t.date}</td>
     <td>${t.name}${t.pending ? ' <span class="pending">pending</span>' : ''}</td>
-    <td class="muted small">${t.effective_category}</td>
+    <td><select class="cat-select" data-txn="${t.transaction_id}">${opts}</select></td>
     <td class="num ${isIn ? 'positive' : 'negative'}">${isIn ? '+' : '-'}${money(Math.abs(t.amount))}</td>`;
+}
+
+async function changeCategory(id, category) {
+  try {
+    await api('/api/transaction_category', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ transaction_id: id, user_category: category }),
+    });
+    await refresh();
+  } catch (e) {
+    showBanner('Could not recategorize: ' + e.message, 'error');
+  }
 }
 
 function renderTransactions(tbodyId, pagerId, txns) {
@@ -181,6 +204,9 @@ function drawTxnPage(tbodyId) {
   body.innerHTML = total
     ? slice.map((t) => `<tr>${txnRowHtml(t)}</tr>`).join('')
     : '<tr><td colspan="4" class="muted">No transactions.</td></tr>';
+  body.querySelectorAll('.cat-select').forEach((sel) =>
+    sel.addEventListener('change', () => changeCategory(sel.dataset.txn, sel.value))
+  );
 
   const pager = $(st.pagerId);
   if (!pager) return;
@@ -214,6 +240,38 @@ async function saveBudget(input) {
   }
 }
 
+async function addCategory() {
+  const input = $('new-cat-input');
+  const name = input.value.trim();
+  if (!name) return;
+  try {
+    await api('/api/category', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+    input.value = '';
+    await refresh();
+  } catch (e) {
+    showBanner('Could not add category: ' + e.message, 'error');
+  }
+}
+
+async function deleteCategory(name) {
+  if (!confirm(`Delete category "${name}"? Any transactions you put in it will revert to their automatic category.`))
+    return;
+  try {
+    await api('/api/category', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+    await refresh();
+  } catch (e) {
+    showBanner('Could not delete category: ' + e.message, 'error');
+  }
+}
+
 function renderOverview(o) {
   $('view-overview').hidden = false;
   $('view-month').hidden = true;
@@ -229,38 +287,42 @@ function renderOverview(o) {
     .map(
       (row) => `
       <tr>
-        <td>${row.category}</td>
+        <td>${row.category}${row.custom ? ` <button class="del-cat" data-cat="${row.category}" title="Delete category">×</button>` : ''}</td>
         <td class="num"><input class="limit-input" type="number" min="0" step="10"
           value="${row.limit ?? ''}" data-cat="${row.category}" placeholder="—" /></td>
       </tr>`
     )
     .join('');
-  $('overview-budget-body')
-    .querySelectorAll('.limit-input')
-    .forEach((input) => input.addEventListener('change', () => saveBudget(input)));
+  const obody = $('overview-budget-body');
+  obody.querySelectorAll('.limit-input').forEach((input) => input.addEventListener('change', () => saveBudget(input)));
+  obody.querySelectorAll('.del-cat').forEach((b) => b.addEventListener('click', () => deleteCategory(b.dataset.cat)));
 
   const totalBudget = o.categories.reduce((s, r) => s + (r.limit || 0), 0);
   $('overview-budget-foot').innerHTML =
     `<tr class="total-row"><td>Total</td><td class="num">${money(totalBudget)}</td></tr>`;
 }
 
-// --- One month -------------------------------------------------------------
-function renderMonth(m) {
+// --- One period (month / year / all-time) ----------------------------------
+function renderPeriod(p) {
   $('view-overview').hidden = true;
   $('view-month').hidden = false;
 
-  $('month-budget-title').textContent = `Budget by category — ${monthLabel(m.month)}`;
-  $('month-pie-title').textContent = `${monthLabel(m.month)} breakdown`;
+  categoryOptions = ['Income', 'Transfer', ...p.categories.map((c) => c.category)];
+
+  const label = periodLabel(p.period);
+  const span = p.monthCount > 1 ? ` · ${p.monthCount} months` : '';
+  $('month-budget-title').textContent = `Budget by category — ${label}${span}`;
+  $('month-pie-title').textContent = `${label} breakdown`;
 
   const incomeRow = `
       <tr class="income-row">
         <td>Income</td>
         <td class="num">—</td>
-        <td class="num positive">+${money(m.income)}</td>
+        <td class="num positive">+${money(p.income)}</td>
       </tr>`;
   $('month-budget-body').innerHTML =
     incomeRow +
-    m.categories
+    p.categories
       .map((row) => {
         const over = row.limit != null && row.spent > row.limit;
         return `
@@ -272,25 +334,42 @@ function renderMonth(m) {
       })
       .join('');
 
-  const totalBudget = m.categories.reduce((s, r) => s + (r.limit || 0), 0);
-  const totalSpent = m.categories.reduce((s, r) => s + r.spent, 0);
+  const totalBudget = p.categories.reduce((s, r) => s + (r.limit || 0), 0);
+  const totalSpent = p.categories.reduce((s, r) => s + r.spent, 0);
   $('month-budget-foot').innerHTML =
     `<tr class="total-row"><td>Total</td><td class="num">${money(totalBudget)}</td>` +
     `<td class="num">${money(totalSpent)}</td></tr>`;
 
-  renderDonut('month-chart', 'month-legend', m);
+  renderDonut('month-chart', 'month-legend', p);
 
-  $('month-txn-title').textContent = `Transactions — ${monthLabel(m.month)}`;
-  renderTransactions('month-txn-body', 'month-pager', m.transactions);
+  // Transactions show only on month tabs, not year views.
+  const isMonth = /^\d{4}-\d{2}$/.test(p.period);
+  $('month-txn-panel').hidden = !isMonth;
+  if (isMonth) {
+    $('month-txn-title').textContent = `Transactions — ${label}`;
+    renderTransactions('month-txn-body', 'month-pager', p.transactions);
+  }
 }
 
 // --- Tabs + boot -----------------------------------------------------------
 function renderTabs(months) {
+  // Overview · All Time · then each year (newest first) followed by its months.
+  const years = [...new Set(months.map((m) => m.slice(0, 4)))];
+  const tokens = ['overview'];
+  for (const y of years) {
+    tokens.push(y);
+    for (const m of months) if (m.slice(0, 4) === y) tokens.push(m);
+  }
+
   const nav = $('tabs');
   nav.hidden = false;
-  const tab = (id, label) =>
-    `<button class="tab ${active === id ? 'active' : ''}" data-tab="${id}">${label}</button>`;
-  nav.innerHTML = tab('overview', 'Overview') + months.map((m) => tab(m, monthLabel(m))).join('');
+  nav.innerHTML = tokens
+    .map((t) => {
+      const isPeriod = t === 'all' || /^\d{4}$/.test(t);
+      const cls = `tab${active === t ? ' active' : ''}${isPeriod ? ' tab-period' : ''}`;
+      return `<button class="${cls}" data-tab="${t}">${periodLabel(t)}</button>`;
+    })
+    .join('');
   nav.querySelectorAll('.tab').forEach((b) =>
     b.addEventListener('click', () => {
       active = b.dataset.tab;
@@ -324,13 +403,18 @@ async function refresh() {
   $('banner').hidden = true;
 
   const overview = await api('/api/overview');
-  if (active !== 'overview' && !overview.months.includes(active)) active = 'overview';
+  const valid = new Set([...overview.months, ...overview.months.map((m) => m.slice(0, 4))]);
+  if (active !== 'overview' && !valid.has(active)) active = 'overview';
   renderTabs(overview.months);
 
   if (active === 'overview') renderOverview(overview);
-  else renderMonth(await api('/api/summary?month=' + active));
+  else renderPeriod(await api('/api/summary?period=' + active));
 }
 
+$('add-cat-btn').addEventListener('click', addCategory);
+$('new-cat-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') addCategory();
+});
 $('import-btn').addEventListener('click', () => $('csv-input').click());
 $('csv-input').addEventListener('change', async (e) => {
   const file = e.target.files[0];

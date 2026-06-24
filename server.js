@@ -9,9 +9,15 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
 app.use(express.json());
 app.use(express.static(join(__dirname, 'public')));
+// Never cache API responses, so the UI always reflects the latest data
+// (e.g. budget totals updating immediately after recategorizing a transaction).
+app.use('/api', (req, res, next) => {
+  res.set('Cache-Control', 'no-store');
+  next();
+});
 
-// The budget categories tracked against, in display order.
-const EXPENSE_BUCKETS = [
+// The built-in budget categories, in display order.
+const DEFAULT_BUCKETS = [
   'Housing (Rent/Mortgage)',
   'Utilities',
   'Groceries',
@@ -29,6 +35,9 @@ const EXPENSE_BUCKETS = [
   'Miscellaneous',
 ];
 const SAVINGS_BUCKET = 'Savings/Investing';
+
+// Full category list = built-ins + any custom categories the user has added.
+const expenseBuckets = () => [...DEFAULT_BUCKETS, ...stmt.listCategories.all().map((r) => r.name)];
 
 // Keyword → category rules, checked in order (specific before general).
 // 'Income' and 'Transfer' are not spending buckets — they're handled separately.
@@ -112,7 +121,7 @@ const displayCategory = (t) => t.user_category || t.category || 'Miscellaneous';
 // Reduce transactions to income / spending / savings + per-bucket spend.
 function computeTotals(txns) {
   let income = 0, spending = 0;
-  const spentByBucket = Object.fromEntries(EXPENSE_BUCKETS.map((b) => [b, 0]));
+  const spentByBucket = Object.fromEntries(expenseBuckets().map((b) => [b, 0]));
   for (const t of txns) {
     const cat = t.user_category || t.category || 'Miscellaneous';
     if (cat === 'Income') {
@@ -208,23 +217,34 @@ app.get('/api/status', (req, res) => {
   res.json({ hasData: (c.n || 0) > 0, count: c.n || 0, earliest: c.earliest, latest: c.latest });
 });
 
-// Per-month budget table + totals + donut.
+// Transactions for a period: 'all', a year 'YYYY', or a month 'YYYY-MM'.
+function txnsForPeriod(period) {
+  if (period === 'all') return stmt.allTxns.all();
+  if (/^\d{4}(-\d{2})?$/.test(period)) return stmt.txnsForMonth.all(`${period}%`);
+  return stmt.txnsForMonth.all(`${currentMonth()}%`);
+}
+
+// Budget table + totals + donut for a period (month, year, or all-time).
+// Budgets are monthly limits, so they're scaled by the number of months with
+// data in the period — keeping "budget vs spent" a fair comparison.
 app.get('/api/summary', (req, res) => {
-  const month = req.query.month || currentMonth();
-  const txns = stmt.txnsForMonth.all(`${month}%`);
+  const period = req.query.period || currentMonth();
+  const txns = txnsForPeriod(period);
   const budgets = Object.fromEntries(stmt.listBudgets.all().map((b) => [b.category, b.monthly_limit]));
   const t = computeTotals(txns);
+  const monthCount = new Set(txns.map((x) => x.date.slice(0, 7))).size || 1;
 
   res.json({
-    month,
+    period,
+    monthCount,
     income: round2(t.income),
     spending: round2(t.spending),
     savings: round2(t.savings),
     leftover: round2(t.leftover),
-    categories: EXPENSE_BUCKETS.map((b) => ({
+    categories: expenseBuckets().map((b) => ({
       category: b,
       spent: round2(t.spentByBucket[b] || 0),
-      limit: budgets[b] ?? null,
+      limit: budgets[b] != null ? round2(budgets[b] * monthCount) : null,
     })),
     transactions: txns.map((x) => ({ ...x, effective_category: displayCategory(x) })),
   });
@@ -247,7 +267,11 @@ app.get('/api/overview', (req, res) => {
     accountCount: accounts.length,
     latest: c.latest,
     months: stmt.distinctMonths.all().map((r) => r.month),
-    categories: EXPENSE_BUCKETS.map((b) => ({ category: b, limit: budgets[b] ?? null })),
+    categories: expenseBuckets().map((b) => ({
+      category: b,
+      limit: budgets[b] ?? null,
+      custom: !DEFAULT_BUCKETS.includes(b),
+    })),
   });
 });
 
@@ -259,6 +283,34 @@ app.post('/api/budget', (req, res) => {
   } else {
     stmt.setBudget.run(category, Number(monthly_limit));
   }
+  res.json({ ok: true });
+});
+
+app.post('/api/category', (req, res) => {
+  const name = String(req.body.name || '').trim();
+  if (!name) return res.status(400).json({ error: 'Category name required.' });
+  if (name.length > 40) return res.status(400).json({ error: 'Name is too long (max 40 chars).' });
+  if (/[<>"'&]/.test(name)) return res.status(400).json({ error: 'Name cannot contain < > " \' or &.' });
+  const taken = new Set(
+    [...DEFAULT_BUCKETS, 'Income', 'Transfer', ...stmt.listCategories.all().map((r) => r.name)]
+      .map((s) => s.toLowerCase())
+  );
+  if (taken.has(name.toLowerCase()))
+    return res.status(400).json({ error: 'That category already exists.' });
+  stmt.insertCategory.run(name);
+  res.json({ ok: true });
+});
+
+app.delete('/api/category', (req, res) => {
+  const name = String(req.body.name || '').trim();
+  if (!name) return res.status(400).json({ error: 'Category name required.' });
+  if (DEFAULT_BUCKETS.includes(name))
+    return res.status(400).json({ error: 'Built-in categories cannot be deleted.' });
+  inTransaction(() => {
+    stmt.deleteCategory.run(name); // remove the custom category
+    stmt.clearUserCategory.run(name); // revert any transactions assigned to it
+    stmt.deleteBudget.run(name); // drop its budget
+  });
   res.json({ ok: true });
 });
 

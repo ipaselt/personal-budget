@@ -3,14 +3,16 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Local-first personal budget planner powered by Plaid",
+  "description": "Local-first personal budget planner (CSV import)",
+  "engines": {
+    "node": ">=22.5"
+  },
   "scripts": {
     "start": "node --no-warnings server.js",
     "dev": "node --no-warnings --watch server.js"
   },
   "dependencies": {
     "dotenv": "^17.4.2",
-    "express": "^5.2.1",
-    "plaid": "^42.2.0"
+    "express": "^5.2.1"
   }
 }

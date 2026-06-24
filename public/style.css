@@ -176,6 +176,7 @@ main { padding: 24px 28px; max-width: 1180px; margin: 0 auto; }
   background: linear-gradient(90deg, var(--accent), var(--accent-2));
   box-shadow: 0 0 10px rgba(109, 140, 255, 0.6);
 }
+.tab-period:not(.active) { color: #9fb0ff; } /* All Time / year tabs */
 
 /* --- Cards & panels (elevated) --- */
 .panel, .card {
@@ -263,6 +264,47 @@ tbody tr:hover { background: rgba(255, 255, 255, 0.022); }
 .over-text { color: var(--red); font-weight: 600; }
 tfoot .total-row td { font-weight: 700; border-top: 2px solid var(--border); border-bottom: none; padding-top: 12px; }
 .income-row td { font-weight: 600; border-bottom: 2px solid var(--border); }
+
+/* Inline category dropdown on each transaction */
+.cat-select {
+  background: var(--surface-2);
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 3px 6px;
+  font-size: 12px;
+  max-width: 170px;
+  cursor: pointer;
+}
+.cat-select:hover { color: var(--text); border-color: var(--accent); }
+.cat-select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(109, 140, 255, 0.18); }
+
+/* Add-category control on the Overview */
+.add-cat { display: flex; gap: 8px; margin-top: 12px; }
+.add-cat input {
+  flex: 1;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-size: 13px;
+}
+.add-cat input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(109, 140, 255, 0.18); }
+.add-cat button { white-space: nowrap; }
+
+.del-cat {
+  background: none;
+  border: none;
+  color: var(--muted-2);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 4px;
+  box-shadow: none;
+  vertical-align: middle;
+}
+.del-cat:hover { color: var(--red); transform: none; box-shadow: none; filter: none; }
 
 /* --- Donut + legend --- */
 .chart-wrap { position: relative; max-width: 210px; margin: 8px auto 0; }

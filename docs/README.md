@@ -25,8 +25,11 @@ logins, API keys, or third parties.
    the dashboard. Re-importing the same file is safe (no duplicates) and re-runs
    categorization — so import again whenever you have new transactions.
 3. On the **Overview** tab, set a monthly limit next to any category to create a
-   budget (these apply to every month). Each **month tab** shows that month's
-   income, spending vs. budget, a breakdown donut, and its transactions.
+   budget (these apply to every month). You can also **add your own categories**
+   here (and delete custom ones with the ×). Each **month tab** shows that month's
+   income, spending vs. budget, a breakdown donut, and its transactions — and you
+   can **recategorize any transaction inline** with the dropdown in its Category
+   column. Year tabs aggregate a whole year.
 
 ## Supported CSV format
 

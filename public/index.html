@@ -49,6 +49,10 @@
             <tfoot id="overview-budget-foot"></tfoot>
           </table>
           <p class="muted small">Set your monthly budget here — these values apply to every month's tab.</p>
+          <div class="add-cat">
+            <input id="new-cat-input" type="text" placeholder="New category name…" maxlength="40" />
+            <button id="add-cat-btn" class="secondary">+ Add category</button>
+          </div>
         </div>
       </div>
 
@@ -73,7 +77,7 @@
         </div>
       </div>
 
-      <div class="panel wide">
+      <div class="panel wide" id="month-txn-panel">
         <h2 id="month-txn-title">Transactions</h2>
         <table>
           <thead><tr><th>Date</th><th>Description</th><th>Category</th><th class="num">Amount</th></tr></thead>
