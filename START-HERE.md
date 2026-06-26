@@ -40,8 +40,8 @@ To stop it, press **Ctrl+C** in Terminal.
 
 1. Log in to your bank and **download a transactions CSV**.
 2. Click **Import CSV** in the app and pick that file.
-3. Set monthly budgets on the **Overview** tab; browse by **month**, **year**,
-   or **All Time** using the tabs.
+3. Set monthly budgets on the **Overview** tab; browse by **month** or **year**
+   using the tabs.
 
 Re-importing the same file is safe (no duplicates) — just import again whenever
 you download new transactions.

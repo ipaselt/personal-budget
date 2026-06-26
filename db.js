@@ -39,6 +39,24 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS custom_categories (
     name TEXT PRIMARY KEY
   );
+
+  -- Learned merchant rules: UPPER(description) -> category. Applied on import and
+  -- when you recategorize, so fixing a merchant once sticks for every future match.
+  CREATE TABLE IF NOT EXISTS learned_categories (
+    pattern  TEXT PRIMARY KEY,   -- UPPER(transactions.name)
+    category TEXT NOT NULL
+  );
+
+  -- Years the user has "closed out". Data stays; these are viewed read-only via Archive.
+  CREATE TABLE IF NOT EXISTS archived_years (
+    year TEXT PRIMARY KEY
+  );
+
+  -- Small key/value store (e.g. active_year).
+  CREATE TABLE IF NOT EXISTS app_settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT
+  );
 `);
 
 export const stmt = {
@@ -73,6 +91,11 @@ export const stmt = {
   setUserCategory: db.prepare(
     `UPDATE transactions SET user_category = ? WHERE transaction_id = ?`
   ),
+  deleteTxnsForMonth: db.prepare(`DELETE FROM transactions WHERE date LIKE ?`),
+  // Drop account rows (and their stale balance) once no transactions reference them.
+  deleteOrphanAccounts: db.prepare(
+    `DELETE FROM accounts WHERE account_id NOT IN (SELECT DISTINCT account_id FROM transactions)`
+  ),
 
   setBudget: db.prepare(
     `INSERT INTO budgets (category, monthly_limit) VALUES (?, ?)
@@ -86,6 +109,34 @@ export const stmt = {
   deleteCategory: db.prepare(`DELETE FROM custom_categories WHERE name = ?`),
   // revert transactions that were manually put in a (now-deleted) category
   clearUserCategory: db.prepare(`UPDATE transactions SET user_category = NULL WHERE user_category = ?`),
+
+  // --- Learned merchant rules ---
+  getTxnName: db.prepare(`SELECT name FROM transactions WHERE transaction_id = ?`),
+  upsertLearned: db.prepare(
+    `INSERT INTO learned_categories (pattern, category) VALUES (?, ?)
+     ON CONFLICT(pattern) DO UPDATE SET category = excluded.category`
+  ),
+  listLearned: db.prepare(`SELECT pattern, category FROM learned_categories`),
+  deleteLearnedByCategory: db.prepare(`DELETE FROM learned_categories WHERE category = ?`),
+  // Force every row of a merchant to a category (used when you recategorize).
+  setUserCatByPattern: db.prepare(
+    `UPDATE transactions SET user_category = ? WHERE UPPER(name) = ?`
+  ),
+  // Fill only rows with no manual choice yet (used after import to apply learned rules).
+  fillUserCatByPattern: db.prepare(
+    `UPDATE transactions SET user_category = ? WHERE UPPER(name) = ? AND user_category IS NULL`
+  ),
+
+  // --- Year archive + settings ---
+  addArchivedYear: db.prepare(`INSERT OR IGNORE INTO archived_years (year) VALUES (?)`),
+  removeArchivedYear: db.prepare(`DELETE FROM archived_years WHERE year = ?`),
+  listArchivedYears: db.prepare(`SELECT year FROM archived_years ORDER BY year DESC`),
+  countForYear: db.prepare(`SELECT COUNT(*) AS n FROM transactions WHERE date LIKE ?`),
+  getSetting: db.prepare(`SELECT value FROM app_settings WHERE key = ?`),
+  setSetting: db.prepare(
+    `INSERT INTO app_settings (key, value) VALUES (?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+  ),
 };
 
 // Run a function inside a transaction (node:sqlite has no .transaction()).

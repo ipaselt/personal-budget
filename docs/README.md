@@ -21,15 +21,21 @@ logins, API keys, or third parties.
 ## Using it
 
 1. Download a transaction CSV from your bank's website.
-2. Click **Import CSV** and pick the file. It parses, categorizes, and populates
-   the dashboard. Re-importing the same file is safe (no duplicates) and re-runs
-   categorization — so import again whenever you have new transactions.
-3. On the **Overview** tab, set a monthly limit next to any category to create a
-   budget (these apply to every month). You can also **add your own categories**
-   here (and delete custom ones with the ×). Each **month tab** shows that month's
-   income, spending vs. budget, a breakdown donut, and its transactions — and you
-   can **recategorize any transaction inline** with the dropdown in its Category
-   column. Year tabs aggregate a whole year.
+2. Open a **year** tab, click a **month** in its grid, and use **Import CSV** to
+   pick the file. It parses, categorizes, and populates the month. Re-importing the
+   same file is safe (no duplicates) and re-applies categorization.
+3. **Navigation:** the tab bar is **Overview · your year(s) · Archive**. Click a
+   month in a year's grid to open its detail (budget vs. spent, a breakdown donut,
+   a spending-by-category donut, and its transactions); use **← Back** to return.
+4. On the **Overview**, set a monthly limit next to any category to create a budget
+   (applies to every month), and **add/delete your own categories**. Click a month
+   in the Overview grid to focus the donut on it.
+5. **Recategorize** any transaction with the dropdown in its Category column — the
+   app **remembers that merchant** and auto-applies your choice to future imports.
+6. **Compare years:** open a month that also exists last year and the chart shows
+   this year vs. last year side by side.
+7. **New year:** **Start new year** archives the current year (kept, read-only under
+   **Archive**) and opens a fresh one; **Restore** un-archives if you change your mind.
 
 ## Supported CSV format
 

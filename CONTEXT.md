@@ -1,10 +1,12 @@
 # Personal Budget — CONTEXT.md
 
-Working detail for `projects/personal-budget/`. Last updated: 2026-06-23.
+Working detail for `projects/personal-budget/`. Last updated: 2026-06-26.
 
-> **Solo, non-orchestrated** project (no `.orchestrated` marker). No planner/worker split, no PR-merge
-> gate — work directly on `master` and commit when the owner asks. The orchestration boilerplate in the
-> template does not apply here.
+> **Solo, non-orchestrated** project (no `.orchestrated` marker). No planner/worker split. Small/low-risk
+> work commits **directly to `master`** when the owner asks. BUT per the global review-before-push rule,
+> **large/risky changes still escalate to a feature branch + independent review before merge** — schema
+> migrations, broad multi-file diffs, balance/correctness math. (2026-06-26: this session's batch is on
+> such a branch, review-pending — see `memory/primer.md`.)
 
 ## What to Load
 | Task | Load | Skip |
@@ -22,9 +24,13 @@ and gives feedback; the Chrome extension + Preview have been unreliable this mac
 checks to the owner (have them hard-refresh: `Ctrl+Shift+R`).
 
 ## Gotchas (see memory/lessons.md for the full list)
-- **Never test against `data/budget.db`** (real data) — back it up, test, restore.
-- Categories are baked at import → after a `RULES` change the owner must **re-import** the CSV.
+- **Never test mutations against `data/budget.db`** (real data) — use a throwaway month/year (`2099-xx`),
+  back up, or clean up after; a 2nd `node:sqlite` connection can reset the new tables.
+- Categories are baked at import → after a `RULES` change the owner must **re-import** the CSV. Manual
+  `user_category` and `learned_categories` rules survive re-imports.
 - `node:sqlite` needs **Node ≥ 22.5**.
+- **Preview screenshot/eval tools time out on this machine** — verify via DOM `eval` + API `curl`, hand
+  the final visual to the owner (hard-refresh `Ctrl+Shift+R`). Stub `window.confirm=()=>true` for guarded actions.
 
 ## What NOT to Do
 - Never commit `.env` or `data/` (both gitignored — `data/` holds the owner's financial data).

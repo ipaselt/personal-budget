@@ -41,3 +41,38 @@ stale. Fixed with `Cache-Control: no-store` middleware on `/api/*`.
 Deps are pure-JS (no native binaries) → bundle `node_modules` so the Mac needs only Node + `npm start`
 (no install). Required Node ≥22.5 for `node:sqlite` (added `engines`). Email was a dead end (Gmail
 blocks `.js` even inside zips); used iCloud Drive / OneDrive instead.
+
+## 2026-06-25 — Charts: small-multiples grid + single-month + category donut
+Overview's per-month trend is a **3×4 grid of mini bar charts** (one per month, shared scale, $ labels),
+not one wide grouped chart — fills the space and reads cleaner. Clicking a grid cell **rescopes the
+all-time donut** to that month (server adds `income` to `monthlySeries()` so the donut center has it).
+Month views show a **single large bars chart** (spending/savings/leftover) + a **per-category breakdown
+donut** (% of total) sharing the donut renderer (extracted `drawDonut` core so the design matches).
+
+## 2026-06-26 — Merchant learning (fix once → sticks)
+Recategorizing now does more than set one row's `user_category`: it saves `UPPER(name)→category` in a new
+`learned_categories` table and applies it to every matching row immediately, and `applyLearnedRules()` runs
+inside every import so future rows auto-categorize. Pattern = exact uppercased description (predictable;
+recurring bills match, varying store-number descriptions won't generalize — acceptable v1). Deleting a
+custom category also drops its learned rules. Chosen by owner over per-transaction-only memory.
+
+## 2026-06-26 — Tab redesign: drill-down replaces month tabs
+Owner wanted to stop tab accumulation. Removed the 12 Jan–Dec tabs. Tab bar = **Overview · [years] · Archive**.
+Months are reached by **clicking a cell in a year's 3×4 grid** (drill-in) → month detail with **← Back**.
+Year tabs shown = `(years-with-data ∪ active_year) − archived`, so normally one year; **archiving is the
+de-clutter mechanism**. Empty months on the active year are clickable so you can drill in to import (no
+header Import button anymore).
+
+## 2026-06-26 — Year rollover/archive/restore data model
+New tables: `app_settings` (key/value; holds `active_year`) and `archived_years`. **Start new year**
+(`POST /api/new_year`) archives `active_year` and bumps it +1 — data is kept, just marked archived and shown
+read-only. **Restore** (`POST /api/unarchive_year`) removes the archive mark; if the active year is the
+*empty* year right after the restored one (classic accidental-archive), it **rolls `active_year` back** so no
+empty year is stranded. Archived views are read-only: import/clear/add hidden AND per-row category dropdowns
+`disabled` (the recategorize path was the gap that needed closing).
+
+## 2026-06-26 — Year-over-year comparison on the month chart
+`/api/summary` for a `YYYY-MM` period also computes the **same month one year earlier** (`prior`, null if no
+data). The month bars chart then draws paired bars per series — this year solid, last year at `opacity 0.4`
+(ghost) with its own price + year label; title becomes "Jan 2027 vs Jan 2026". Shared y-scale across both
+years for fair comparison.

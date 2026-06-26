@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import express from 'express';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { stmt, inTransaction } from './db.js';
@@ -161,7 +161,7 @@ app.post('/api/import', express.text({ type: '*/*', limit: '15mb' }), (req, res)
       return res.status(400).json({ error: 'Could not find Debit/Credit or Amount columns.' });
 
     const latestByAccount = {};
-    let imported = 0, skipped = 0;
+    let imported = 0, skipped = 0, maxDate = null;
 
     inTransaction(() => {
       for (let r = 1; r < rows.length; r++) {
@@ -194,6 +194,7 @@ app.post('/api/import', express.text({ type: '*/*', limit: '15mb' }), (req, res)
 
         stmt.upsertTxn.run(id, account, date, desc, amount, category, balance, pending);
         imported++;
+        if (!maxDate || date > maxDate) maxDate = date;
 
         if (balance != null) {
           const prev = latestByAccount[account];
@@ -203,9 +204,10 @@ app.post('/api/import', express.text({ type: '*/*', limit: '15mb' }), (req, res)
       for (const [account, info] of Object.entries(latestByAccount)) {
         stmt.upsertAccount.run(account, info.balance, info.date);
       }
+      applyLearnedRules(); // auto-apply your remembered merchant categories to new rows
     });
 
-    res.json({ ok: true, imported, skipped });
+    res.json({ ok: true, imported, skipped, latestMonth: maxDate ? maxDate.slice(0, 7) : null });
   } catch (err) {
     console.error('Import error:', err);
     res.status(400).json({ error: 'Could not parse CSV: ' + err.message });
@@ -217,11 +219,48 @@ app.get('/api/status', (req, res) => {
   res.json({ hasData: (c.n || 0) > 0, count: c.n || 0, earliest: c.earliest, latest: c.latest });
 });
 
+// Apply every learned merchant rule to transactions that have no manual category yet.
+function applyLearnedRules() {
+  for (const { pattern, category } of stmt.listLearned.all()) {
+    stmt.fillUserCatByPattern.run(category, pattern);
+  }
+}
+
+// The year currently being worked on (the one top-level year tab). Defaults to the
+// latest year with data, else the current calendar year; persisted once resolved.
+function getActiveYear() {
+  const s = stmt.getSetting.get('active_year');
+  if (s && s.value) return s.value;
+  const c = stmt.counts.get();
+  const y = c.latest ? c.latest.slice(0, 4) : String(new Date().getFullYear());
+  stmt.setSetting.run('active_year', y);
+  return y;
+}
+
 // Transactions for a period: 'all', a year 'YYYY', or a month 'YYYY-MM'.
 function txnsForPeriod(period) {
   if (period === 'all') return stmt.allTxns.all();
   if (/^\d{4}(-\d{2})?$/.test(period)) return stmt.txnsForMonth.all(`${period}%`);
   return stmt.txnsForMonth.all(`${currentMonth()}%`);
+}
+
+// Per-month spending / savings / leftover across all data (oldest first) — the
+// trend bar chart shown on the Overview and on every month tab.
+function monthlySeries() {
+  const byMonth = {};
+  for (const x of stmt.allTxns.all()) (byMonth[x.date.slice(0, 7)] ||= []).push(x);
+  return Object.keys(byMonth)
+    .sort()
+    .map((month) => {
+      const m = computeTotals(byMonth[month]);
+      return {
+        month,
+        income: round2(m.income),
+        spending: round2(m.spending),
+        savings: round2(m.savings),
+        leftover: round2(m.leftover),
+      };
+    });
 }
 
 // Budget table + totals + donut for a period (month, year, or all-time).
@@ -234,6 +273,24 @@ app.get('/api/summary', (req, res) => {
   const t = computeTotals(txns);
   const monthCount = new Set(txns.map((x) => x.date.slice(0, 7))).size || 1;
 
+  // For a month view, also compute the same month one year earlier so the chart
+  // can show this-year vs last-year side by side. Null if there's no prior data.
+  let prior = null;
+  const mMatch = period.match(/^(\d{4})-(\d{2})$/);
+  if (mMatch) {
+    const pyPeriod = `${Number(mMatch[1]) - 1}-${mMatch[2]}`;
+    const pyTxns = txnsForPeriod(pyPeriod);
+    if (pyTxns.length) {
+      const pt = computeTotals(pyTxns);
+      prior = {
+        period: pyPeriod,
+        spending: round2(pt.spending),
+        savings: round2(pt.savings),
+        leftover: round2(pt.leftover),
+      };
+    }
+  }
+
   res.json({
     period,
     monthCount,
@@ -241,6 +298,8 @@ app.get('/api/summary', (req, res) => {
     spending: round2(t.spending),
     savings: round2(t.savings),
     leftover: round2(t.leftover),
+    prior,
+    monthly: monthlySeries(),
     categories: expenseBuckets().map((b) => ({
       category: b,
       spent: round2(t.spentByBucket[b] || 0),
@@ -252,7 +311,8 @@ app.get('/api/summary', (req, res) => {
 
 // Landing view: all-time totals, current balance, month list, budgets.
 app.get('/api/overview', (req, res) => {
-  const t = computeTotals(stmt.allTxns.all());
+  const allTxns = stmt.allTxns.all();
+  const t = computeTotals(allTxns);
   const accounts = stmt.listAccounts.all();
   const balance = accounts.reduce((s, a) => s + (a.current_balance || 0), 0);
   const budgets = Object.fromEntries(stmt.listBudgets.all().map((b) => [b.category, b.monthly_limit]));
@@ -267,6 +327,9 @@ app.get('/api/overview', (req, res) => {
     accountCount: accounts.length,
     latest: c.latest,
     months: stmt.distinctMonths.all().map((r) => r.month),
+    monthly: monthlySeries(),
+    activeYear: getActiveYear(),
+    archivedYears: stmt.listArchivedYears.all().map((r) => r.year),
     categories: expenseBuckets().map((b) => ({
       category: b,
       limit: budgets[b] ?? null,
@@ -310,15 +373,83 @@ app.delete('/api/category', (req, res) => {
     stmt.deleteCategory.run(name); // remove the custom category
     stmt.clearUserCategory.run(name); // revert any transactions assigned to it
     stmt.deleteBudget.run(name); // drop its budget
+    stmt.deleteLearnedByCategory.run(name); // forget any learned rules pointing to it
   });
   res.json({ ok: true });
 });
 
+// Manually add a single transaction (for testing / filling in data the CSV missed).
+// amount sign follows the app convention: + = money in, - = money out.
+app.post('/api/transaction', (req, res) => {
+  const { date, name, amount, category } = req.body;
+  if (!parseDate(date)) return res.status(400).json({ error: 'A valid date is required.' });
+  const desc = String(name || '').trim();
+  if (!desc) return res.status(400).json({ error: 'A description is required.' });
+  const amt = Number(amount);
+  if (!isFinite(amt) || amt === 0) return res.status(400).json({ error: 'Amount must be a non-zero number.' });
+  const cat = String(category || '').trim() || (amt > 0 ? 'Income' : 'Miscellaneous');
+  // Random id so identical manual rows don't collide (unlike the import dedup hash).
+  stmt.upsertTxn.run(randomUUID().slice(0, 16), 'manual', parseDate(date), desc, round2(amt), cat, null, 0);
+  res.json({ ok: true });
+});
+
+// Wipe every transaction in a month (e.g. to redo data you entered wrong).
+app.post('/api/clear_month', (req, res) => {
+  const month = String(req.body.month || '').trim();
+  if (!/^\d{4}-\d{2}$/.test(month)) return res.status(400).json({ error: 'A month (YYYY-MM) is required.' });
+  let deleted = 0;
+  inTransaction(() => {
+    deleted = Number(stmt.deleteTxnsForMonth.run(`${month}%`).changes) || 0;
+    stmt.deleteOrphanAccounts.run(); // clear the balance for any account left with no transactions
+  });
+  res.json({ ok: true, deleted });
+});
+
+// Recategorize a transaction. Beyond fixing this row, we "learn the merchant":
+// remember UPPER(description) -> category and apply it to every matching row now
+// and on future imports, so a fix sticks for that merchant going forward.
 app.post('/api/transaction_category', (req, res) => {
   const { transaction_id, user_category } = req.body;
   if (!transaction_id) return res.status(400).json({ error: 'transaction_id required' });
-  stmt.setUserCategory.run(user_category || null, transaction_id);
+  const row = stmt.getTxnName.get(transaction_id);
+  const pattern = row ? String(row.name || '').toUpperCase() : null;
+  inTransaction(() => {
+    if (user_category && pattern) {
+      stmt.upsertLearned.run(pattern, user_category); // remember the merchant
+      stmt.setUserCatByPattern.run(user_category, pattern); // fix every matching row now
+    } else {
+      stmt.setUserCategory.run(user_category || null, transaction_id);
+    }
+  });
   res.json({ ok: true });
+});
+
+// Close out the active year: archive it (data kept, viewable read-only) and open
+// the next year fresh. The user's explicit "Start new year" action.
+app.post('/api/new_year', (req, res) => {
+  const active = getActiveYear();
+  const next = String(Number(active) + 1);
+  inTransaction(() => {
+    stmt.addArchivedYear.run(active);
+    stmt.setSetting.run('active_year', next);
+  });
+  res.json({ ok: true, activeYear: next, archived: active });
+});
+
+// Restore an archived year (undo an accidental archive). If the active year is the
+// empty year immediately after it (the classic "I clicked Start new year by mistake"),
+// roll the active pointer back so we don't leave an empty year stranded.
+app.post('/api/unarchive_year', (req, res) => {
+  const year = String(req.body.year || '').trim();
+  if (!/^\d{4}$/.test(year)) return res.status(400).json({ error: 'A year (YYYY) is required.' });
+  inTransaction(() => {
+    stmt.removeArchivedYear.run(year);
+    const active = getActiveYear();
+    if (Number(active) === Number(year) + 1 && !stmt.countForYear.get(`${active}%`).n) {
+      stmt.setSetting.run('active_year', year);
+    }
+  });
+  res.json({ ok: true, activeYear: getActiveYear() });
 });
 
 const port = process.env.PORT || 4000;

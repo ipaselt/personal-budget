@@ -176,7 +176,36 @@ main { padding: 24px 28px; max-width: 1180px; margin: 0 auto; }
   background: linear-gradient(90deg, var(--accent), var(--accent-2));
   box-shadow: 0 0 10px rgba(109, 140, 255, 0.6);
 }
-.tab-period:not(.active) { color: #9fb0ff; } /* All Time / year tabs */
+.tab-period:not(.active) { color: #9fb0ff; } /* year tabs */
+
+/* Archive dropdown lives in the tab bar */
+.archive-select {
+  align-self: center;
+  margin-left: 6px;
+  background: var(--surface-2);
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.archive-select:hover { color: var(--text); border-color: var(--accent); }
+
+/* Control bar above a drilled-in month / year view */
+.view-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; min-height: 1px; }
+.view-bar:empty { display: none; }
+.archived-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--amber);
+  background: rgba(227, 179, 65, 0.12);
+  border: 1px solid rgba(227, 179, 65, 0.25);
+  padding: 4px 10px;
+  border-radius: 999px;
+}
+#start-new-year { margin-left: auto; }
 
 /* --- Cards & panels (elevated) --- */
 .panel, .card {
@@ -325,6 +354,77 @@ tfoot .total-row td { font-weight: 700; border-top: 2px solid var(--border); bor
 .legend strong { font-variant-numeric: tabular-nums; }
 .legend-total { border-bottom: 1px solid var(--border); padding-bottom: 9px; }
 .legend-total .legend-name { color: var(--text); }
+
+/* --- Month panel head + manual add-transaction form --- */
+.panel-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
+.panel-head h2 { margin: 0; }
+.head-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+button.danger { color: var(--red); border-color: rgba(255, 106, 106, 0.3); }
+button.danger:hover { background: rgba(255, 106, 106, 0.1); border-color: rgba(255, 106, 106, 0.5); box-shadow: none; }
+
+.add-txn-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 18px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.add-txn-form input, .add-txn-form select {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-size: 13px;
+  font-family: inherit;
+}
+.add-txn-form input:focus, .add-txn-form select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(109, 140, 255, 0.18);
+}
+#txn-desc { flex: 1; min-width: 160px; }
+#txn-amount { width: 110px; text-align: right; font-variant-numeric: tabular-nums; }
+.add-txn-form select { cursor: pointer; }
+
+/* --- Monthly trend bar chart --- */
+.bars-section { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--border); }
+.bars-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.bars-title { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.07em; font-weight: 600; }
+.bars-legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); }
+.bars-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.bars-legend i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+.bars-wrap { position: relative; overflow-x: auto; text-align: center; }
+/* Overview small-multiples: 3x4 grid of per-month mini bar charts */
+.month-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.mg-cell {
+  background: var(--surface-2);
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  padding: 8px 6px 6px;
+  text-align: center;
+}
+.mg-cell.mg-empty { opacity: 0.45; }
+.mg-clickable { cursor: pointer; transition: border-color 0.15s ease, background 0.15s ease; }
+.mg-clickable:hover { border-color: var(--accent); background: var(--surface-3); }
+.mg-cell.mg-active { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(109, 140, 255, 0.3); }
+/* Year tab: the grid sits in a full-width panel — cap + center so cells aren't huge. */
+#month-chart-panel.wide .month-grid { max-width: 560px; margin: 0 auto; }
+.mg-label { font-size: 11px; color: var(--muted); margin-bottom: 4px; font-weight: 600; }
+.mg-val { fill: var(--muted); font-size: 9px; font-variant-numeric: tabular-nums; }
+.bar-val-lg { fill: var(--text); font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.bar-year { fill: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+.mg-svg { width: 100%; height: auto; display: block; }
+.mg-cell rect { transition: filter 0.15s ease; }
+.mg-cell:hover rect { filter: brightness(1.12); }
+.bars-svg { display: block; margin: 0 auto; height: auto; }
+.bar { cursor: pointer; transition: filter 0.15s ease, transform 0.7s ease-out; }
+.bar:hover { filter: brightness(1.15); }
+.bar-grid { stroke: rgba(255, 255, 255, 0.05); }
+.bar-base { stroke: var(--border); }
+.bar-label { fill: var(--muted); font-size: 11px; }
 
 /* --- Pagination --- */
 .pager { display: flex; gap: 12px; align-items: center; justify-content: center; margin-top: 16px; }

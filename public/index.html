@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Personal Budget</title>
   <link rel="stylesheet" href="style.css" />
-  <script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
 </head>
 <body>
   <header>
@@ -16,7 +15,6 @@
     <div class="actions">
       <span id="institutions" class="muted"></span>
       <input type="file" id="csv-input" accept=".csv,text/csv" hidden />
-      <button id="import-btn">Import CSV</button>
     </div>
   </header>
 
@@ -37,9 +35,21 @@
 
       <div class="grid">
         <div class="panel">
-          <h2>Where your income has gone (all-time)</h2>
+          <h2 id="overview-chart-title">Where your income has gone (all-time)</h2>
           <div class="chart-wrap" id="overview-chart"></div>
           <ul id="overview-legend" class="legend"></ul>
+
+          <div class="bars-section">
+            <div class="bars-head">
+              <span class="bars-title" id="overview-bars-title">By month</span>
+              <div class="bars-legend">
+                <span><i style="background:#ff6a6a"></i>Spending</span>
+                <span><i style="background:#6d8cff"></i>Savings</span>
+                <span><i style="background:#41d68a"></i>Leftover</span>
+              </div>
+            </div>
+            <div class="month-grid" id="overview-bars"></div>
+          </div>
         </div>
         <div class="panel">
           <h2>Monthly budget</h2>
@@ -58,10 +68,16 @@
 
     </section>
 
-    <!-- ONE MONTH -->
+    <!-- ONE MONTH or ONE YEAR (drill-in target) -->
     <section id="view-month" class="view" hidden>
+      <div class="view-bar" id="view-bar">
+        <button id="back-to-year" class="secondary" hidden>← Back</button>
+        <span id="archived-label" class="archived-label" hidden></span>
+        <button id="restore-year" class="secondary" hidden>↩ Restore year</button>
+        <button id="start-new-year" class="secondary" hidden>Start new year ↻</button>
+      </div>
       <div class="grid">
-        <div class="panel">
+        <div class="panel" id="month-budget-panel">
           <h2 id="month-budget-title">Budget by category</h2>
           <table id="budget-table">
             <thead><tr><th>Category</th><th class="num">Budget</th><th class="num">Spent</th></tr></thead>
@@ -70,15 +86,52 @@
           </table>
           <p class="muted small">Budgets are set on the <strong>Overview</strong> tab. Spent turns red when you're over.</p>
         </div>
-        <div class="panel">
+        <div class="panel" id="month-chart-panel">
           <h2 id="month-pie-title">This month</h2>
           <div class="chart-wrap" id="month-chart"></div>
           <ul id="month-legend" class="legend"></ul>
+
+          <div class="bars-section">
+            <div class="bars-head">
+              <span class="bars-title" id="month-bars-title">By month</span>
+              <div class="bars-legend">
+                <span><i style="background:#ff6a6a"></i>Spending</span>
+                <span><i style="background:#6d8cff"></i>Savings</span>
+                <span><i style="background:#41d68a"></i>Leftover</span>
+              </div>
+            </div>
+            <div class="bars-wrap" id="month-bars"></div>
+          </div>
+
+          <div class="bars-section" id="month-cat-section">
+            <div class="bars-head"><span class="bars-title">Spending by category (% of total)</span></div>
+            <div class="chart-wrap" id="month-cat-chart"></div>
+            <ul id="month-cat-legend" class="legend"></ul>
+          </div>
         </div>
       </div>
 
       <div class="panel wide" id="month-txn-panel">
-        <h2 id="month-txn-title">Transactions</h2>
+        <div class="panel-head">
+          <h2 id="month-txn-title">Transactions</h2>
+          <div class="head-actions">
+            <button id="month-import-btn" class="secondary">Import CSV</button>
+            <button id="clear-month-btn" class="secondary danger">Clear month</button>
+          </div>
+        </div>
+
+        <form id="add-txn-form" class="add-txn-form">
+          <input type="date" id="txn-date" required />
+          <input type="text" id="txn-desc" placeholder="Description" maxlength="120" required />
+          <select id="txn-dir">
+            <option value="out">Money out</option>
+            <option value="in">Money in</option>
+          </select>
+          <input type="number" id="txn-amount" placeholder="0.00" min="0.01" step="0.01" required />
+          <select id="txn-cat"></select>
+          <button type="submit">Add</button>
+        </form>
+
         <table>
           <thead><tr><th>Date</th><th>Description</th><th>Category</th><th class="num">Amount</th></tr></thead>
           <tbody id="month-txn-body"></tbody>

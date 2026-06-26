@@ -27,27 +27,28 @@ personal-budget/
 - **Import:** `POST /api/import` takes raw CSV text. The parser auto-detects columns by header name (Date, Description, Debit/Credit *or* Amount, Balance, Status, Account). Tuned for Ardent Credit Union (`Account Number, Post Date, Check, Description, Debit, Credit, Status, Balance`) but flexible.
 - **Sign convention:** stored `amount` is **+ = money in (credit)**, **− = money out (debit)**.
 - **Categorization:** keyword `RULES` in `server.js` map a description → one of 15 default buckets (or `Income`/`Transfer`). Unmatched inflow → `Income`, unmatched outflow → `Miscellaneous`. Per-txn `user_category` override wins and survives re-imports; set it from the **inline dropdown on each transaction row** (POST `/api/transaction_category`).
-- **Custom categories:** user adds/removes them on the Overview (`custom_categories` table; `POST`/`DELETE /api/category`). The full list = `DEFAULT_BUCKETS` + custom (via `expenseBuckets()`), so a new category shows in every tab. Deleting one reverts its transactions to auto-category and clears its budget. Built-ins can't be deleted.
-- **Periods:** `GET /api/summary?period=` accepts `YYYY-MM` (month) or `YYYY` (year). Budgets are monthly, so a year view scales budget by `monthCount` (months with data). Year tabs show no transaction list; month tabs do. (`all` is still supported server-side but the All-Time tab was removed.)
+- **Merchant learning:** recategorizing also saves `UPPER(description)→category` in `learned_categories` and applies it to all matching rows now + on every future import (`applyLearnedRules()`). Fix a merchant once → it sticks. Deleting a custom category drops its learned rules too.
+- **Custom categories:** user adds/removes them on the Overview (`custom_categories` table; `POST`/`DELETE /api/category`). Full list = `DEFAULT_BUCKETS` + custom (via `expenseBuckets()`). Deleting one reverts its transactions to auto-category and clears its budget. Built-ins can't be deleted.
+- **Navigation:** tab bar = **Overview · [non-archived years] · Archive ▾** — NO month tabs. Drill into a month by clicking a cell in a year's 3×4 grid (→ month detail + **← Back**). `GET /api/summary?period=` accepts `YYYY-MM` or `YYYY`; a month summary also returns `prior` (same month, prior year) for the year-over-year chart. `/api/overview` returns `activeYear`, `archivedYears`, and `monthly` (per-month income/spend/save/leftover).
+- **Year rollover:** `app_settings.active_year` + `archived_years` tables. `POST /api/new_year` archives the active year (kept, read-only) and bumps +1; `POST /api/unarchive_year` restores (rolls active back if the next year is still empty). Archived views are read-only (import/clear/add hidden, category dropdowns disabled).
 - **Totals:** Income = inflows categorized `Income`; Spending = outflow buckets except `Savings/Investing` and `Transfer`; Net/Leftover = income − spending − savings.
-- **Balance:** current balance = sum of each account's latest-dated `Balance` value from the CSV.
-- **Dedup:** transaction id = sha1(account|date|desc|amount|balance) → re-importing the same CSV is idempotent.
-- **No-cache:** API responses send `Cache-Control: no-store` (Express ETags were serving stale budget data after recategorizing).
+- **Manual data:** `POST /api/transaction` (add one row), `POST /api/clear_month` (wipe a month + drop orphan accounts). **Balance** = sum of each account's latest-dated `Balance` from the CSV.
+- **Dedup:** transaction id = sha1(account|date|desc|amount|balance) → re-importing the same CSV is idempotent. **No-cache:** `/api/*` sends `Cache-Control: no-store`.
 
 ## Conventions
 - One fact, one location; lowercase-hyphen naming. No secrets needed; `.env` holds only PORT.
 
-## Current State (2026-06-23)
-- ✅ Tabbed UI: **Overview** (current-balance card + all-time donut + editable budget table with **add/delete custom categories**) · **per-year** tab (budget/spent table + donut, no txn list) · **per-month** tab (income row + read-only budgets + spent + donut + paginated transactions with an **inline category dropdown**).
-- ✅ CSV import + keyword categorization; budgets are recurring monthly limits set on Overview; custom categories propagate to all tabs.
-- ✅ API responses are `no-store` (fixed stale budget after recategorize). Plaid fully removed.
-- ✅ Owner's real Ardent data loaded in `data/budget.db` (38 txns, June 2026). Server typically left running on :4000.
-- ✅ **Packaged for distribution:** `START-HERE.md` + cleaned `package.json` (no `plaid`, `engines>=22.5`); a `personal-budget.zip` (bundled node_modules, forward-slash paths, excludes `.env`/`data/`) was built and dropped in the owner's iCloud Drive + OneDrive to move to their Mac. Rebuild via the stage→zip steps in `memory/lessons.md`.
-- ⏳ Categorization `RULES` are a starter set — keep tuning to real merchants (the owner can now self-serve via the dropdown). Last tuning pass: WAWA→Dining, GULF→Transport, golf→Entertainment, S0001→Savings, "via Mobile"→MOBIL fix.
+## Current State (2026-06-26)
+- ⚠️ **This session's large feature batch is committed on a FEATURE BRANCH, not `master`, and is REVIEW-PENDING** (schema migration + broad multi-file + balance/comparison math = full-review triggers). `master` is at `821fc59`. **Next: independent review of the branch → merge.** Details in `memory/primer.md`.
+- ✅ Done this session (all verified in-browser): merchant learning · tab redesign (Overview · years · Archive, drill-into-month from year grids) · year archive/restore + Start-new-year · year-over-year month comparison (ghost bars) · Overview 3×4 month-grid (click → donut rescopes) · per-month single-bars + category-% donut · manual Add transaction · Clear month · empty-state keeps UI · per-month Import.
+- ✅ Owner's real Ardent data in `data/budget.db` (**414 txns, Jan–Jun 2026**). Server usually left running on :4000.
+- ✅ Distribution: `personal-budget.zip` in OneDrive; full-year sample CSVs (`personal-budget-2026.csv`/`-2027.csv`, accounts `2026`/`2027`) delivered for testing.
+- ⏳ Categorization `RULES` are a starter set — tune as new merchants land in Miscellaneous (owner self-serves via the dropdown + merchant learning now).
 
 ## Next up (none committed-blocking)
+- **Leftover rollover / envelope budgeting** (owner-requested backlog, 2026-06-25): let unspent "leftover" carry into the next month and be allocatable to categories (running surplus total, and/or full envelope budgeting with category rollover). Deferred — current model is CSV-actuals; the real surplus already rolls over in the running bank balance.
 - Optional polish the owner flagged: recategorize currently triggers a full refresh (resets txn pager to page 1) — could update in place.
-- Possible future: CSV export of a month, category delete from month views too, multi-account balance breakdown.
+- Possible future: CSV export of a month (esp. before archiving a year), category delete from month views too, multi-account balance breakdown.
 
 ## Avoid
 - Never commit `.env` or `data/`.

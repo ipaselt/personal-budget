@@ -28,3 +28,14 @@
   to the Mac via **iCloud Drive** (`~/iCloudDrive`) or **OneDrive** (`~/OneDrive`), not email.
 - **Serena dashboard auto-open** (unrelated to this repo): set `web_dashboard_open_on_launch: false` in
   `~/.serena/serena_config.yml` to stop the browser tab popping on every Claude launch.
+- **Preview tools are flaky here** — `preview_screenshot` and sometimes `preview_eval` time out (30s) even
+  though the page is live. Verify behavior with DOM `eval` (read state directly) and API `curl`; `location.reload()`
+  inside an eval races your follow-up clicks — set `active` + call `refresh()` instead of reloading.
+- **Test schema/data changes on a throwaway month/year, then clean up.** Used `2099-xx` months and account
+  ids like `7777`/`9999` for import/recategorize/clear tests; `clear_month` + `deleteOrphanAccounts` removes
+  them. For the new tables you can open a 2nd `node:sqlite` connection (`import { db } from './db.js'`) for a
+  quick DELETE/reset while the server holds the file — fast ops don't lock-conflict.
+- **Stub `window.confirm = () => true` in preview eval** before clicking actions guarded by `confirm()`
+  (Start new year, Restore, Clear month, delete category) or the eval hangs on the dialog.
+- **Multi-year tab model:** shown year tabs = `(data years ∪ active_year) − archived`. A year that has data
+  but is neither active nor archived still shows (don't strand data); archiving is what removes it from tabs.
