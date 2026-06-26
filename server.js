@@ -436,6 +436,20 @@ app.post('/api/new_year', (req, res) => {
   res.json({ ok: true, activeYear: next, archived: active });
 });
 
+// Archive an arbitrary past year without moving the active-year pointer. This covers
+// years that aren't the active one — e.g. a year you just restored, or an older year
+// that was imported directly and never closed out via "Start new year".
+app.post('/api/archive_year', (req, res) => {
+  const year = String(req.body.year || '').trim();
+  if (!/^\d{4}$/.test(year)) return res.status(400).json({ error: 'A year (YYYY) is required.' });
+  if (year === String(getActiveYear()))
+    return res.status(400).json({ error: 'Use "Start new year" to close out the active year.' });
+  if (!stmt.countForYear.get(`${year}%`).n)
+    return res.status(400).json({ error: 'That year has no data to archive.' });
+  stmt.addArchivedYear.run(year);
+  res.json({ ok: true, archived: year });
+});
+
 // Restore an archived year (undo an accidental archive). If the active year is the
 // empty year immediately after it (the classic "I clicked Start new year by mistake"),
 // roll the active pointer back so we don't leave an empty year stranded.

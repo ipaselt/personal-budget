@@ -547,6 +547,10 @@ function renderPeriod(p) {
   // Restore (un-archive) is offered whenever you're viewing an archived year/month.
   $('restore-year').hidden = !archived;
   $('restore-year').onclick = () => restoreYear(year);
+  // Archive year: offered on a non-active, non-archived past year (e.g. one you just
+  // restored, or an older year imported directly and never closed out).
+  $('archive-year').hidden = !(isYear && !archived && year !== activeYear);
+  $('archive-year').onclick = () => archiveYear(year);
 
   // Year view drops the budget table and widens the chart panel to the month grid.
   $('month-budget-panel').hidden = isYear;
@@ -596,6 +600,23 @@ async function restoreYear(year) {
     setTimeout(() => ($('banner').hidden = true), 4000);
   } catch (e) {
     showBanner('Could not restore year: ' + e.message, 'error');
+  }
+}
+
+async function archiveYear(year) {
+  if (!confirm(`Archive ${year}? It moves under Archive and becomes read-only. You can restore it anytime.`)) return;
+  try {
+    await api('/api/archive_year', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ year }),
+    });
+    active = 'overview'; // the year leaves the tab bar, so don't sit on a now-hidden tab
+    await refresh();
+    showBanner(`Archived ${year} — find it under Archive ▾.`, 'info');
+    setTimeout(() => ($('banner').hidden = true), 4000);
+  } catch (e) {
+    showBanner('Could not archive year: ' + e.message, 'error');
   }
 }
 
