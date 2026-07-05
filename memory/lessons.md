@@ -39,3 +39,11 @@
   (Start new year, Restore, Clear month, delete category) or the eval hangs on the dialog.
 - **Multi-year tab model:** shown year tabs = `(data years ∪ active_year) − archived`. A year that has data
   but is neither active nor archived still shows (don't strand data); archiving is what removes it from tabs.
+- **Background `node` servers do NOT survive session boundaries here** (torn down between turns, no marker).
+  On restart the background shell's **cwd resets to `~/Developer`**, so `node server.js` fails
+  (`Cannot find module …/server.js`) — always restart with the **absolute path**:
+  `PORT=4001 node "C:/Users/.../personal-budget/branches/redesign-preview/server.js"`. `db.js` resolves the
+  data dir from its own `__dirname`, so cwd doesn't matter for the DB — only for finding the entry file.
+- **A nested sandbox resolves the parent's `node_modules`** (Node walks up the tree), so
+  `branches/redesign-preview/` runs without its own install. But the **distribution zip must bundle
+  `node_modules`** (the Mac has no parent tree) — copy it in when packaging.

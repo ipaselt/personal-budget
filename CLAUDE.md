@@ -38,11 +38,11 @@ personal-budget/
 ## Conventions
 - One fact, one location; lowercase-hyphen naming. No secrets needed; `.env` holds only PORT.
 
-## Current State (2026-06-26)
-- ⚠️ **This session's large feature batch is committed on a FEATURE BRANCH, not `master`, and is REVIEW-PENDING** (schema migration + broad multi-file + balance/comparison math = full-review triggers). `master` is at `821fc59`. **Next: independent review of the branch → merge.** Details in `memory/primer.md`.
-- ✅ Done this session (all verified in-browser): merchant learning · tab redesign (Overview · years · Archive, drill-into-month from year grids) · year archive/restore + Start-new-year · year-over-year month comparison (ghost bars) · Overview 3×4 month-grid (click → donut rescopes) · per-month single-bars + category-% donut · manual Add transaction · Clear month · empty-state keeps UI · per-month Import.
-- ✅ Owner's real Ardent data in `data/budget.db` (**414 txns, Jan–Jun 2026**). Server usually left running on :4000.
-- ✅ Distribution: `personal-budget.zip` in OneDrive; full-year sample CSVs (`personal-budget-2026.csv`/`-2027.csv`, accounts `2026`/`2027`) delivered for testing.
+## Current State (2026-07-05)
+- ⭐ **Frontend redesign "Mission Control" built in a SANDBOX, NOT yet ported.** Full working copy in `branches/redesign-preview/` (gitignored), runs on `:4001`; real `public/` is untouched. Icon rail (clickable), segmented tabs, KPI strip (active-year + YoY deltas), cumulative all-years Overview donut, budget-progress rows, insight line, recent-activity peek, monospace figures. `/api/overview` extended (additive) with per-category year spend + recent. **Next: owner decides whether to port → then review before master.** Details in `memory/primer.md`.
+- ⚠️ **The earlier feature branch (`feature/archive-merchant-learning-yoy`, HEAD `066fc14`) is still REVIEW-PENDING before merge to `master`** (@ `821fc59`). Pushed to private GitHub repo `ipaselt/personal-budget`.
+- ✅ Prior work (verified): merchant learning · tab redesign (Overview · years · Archive) · year archive/restore + Start-new-year + **archive-year for non-active years** · YoY month comparison · 3×4 month-grid · per-month single-bars + category donut · Add/Clear/Import.
+- ✅ Distribution (OneDrive, for owner's Mac): `personal-budget-redesign.zip` (redesign, offline/system-fonts, bundled deps, macOS-safe zip) + `personal-budget-2026.csv`/`-2027.csv` (216 rows each, accounts `2026`/`2027`, exported from the sandbox db). Old `personal-budget.zip` left in place.
 - ⏳ Categorization `RULES` are a starter set — tune as new merchants land in Miscellaneous (owner self-serves via the dropdown + merchant learning now).
 
 ## Next up (none committed-blocking)
