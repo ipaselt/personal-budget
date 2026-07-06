@@ -97,6 +97,20 @@ export const stmt = {
   deleteOrphanAccounts: db.prepare(
     `DELETE FROM accounts WHERE account_id NOT IN (SELECT DISTINCT account_id FROM transactions)`
   ),
+  // Refresh each surviving account's balance from its latest-dated balance-carrying
+  // transaction (rowid breaks same-date ties by insertion order, matching import).
+  // Used after clear_month so the balance never reflects a deleted month.
+  recomputeAccountBalances: db.prepare(
+    `UPDATE accounts SET
+       current_balance = (SELECT t.balance FROM transactions t
+         WHERE t.account_id = accounts.account_id AND t.balance IS NOT NULL
+         ORDER BY t.date DESC, t.rowid DESC LIMIT 1),
+       as_of = (SELECT t.date FROM transactions t
+         WHERE t.account_id = accounts.account_id AND t.balance IS NOT NULL
+         ORDER BY t.date DESC, t.rowid DESC LIMIT 1)
+     WHERE EXISTS (SELECT 1 FROM transactions t
+       WHERE t.account_id = accounts.account_id AND t.balance IS NOT NULL)`
+  ),
 
   setBudget: db.prepare(
     `INSERT INTO budgets (category, monthly_limit) VALUES (?, ?)

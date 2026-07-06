@@ -435,6 +435,7 @@ app.post('/api/clear_month', (req, res) => {
   inTransaction(() => {
     deleted = Number(stmt.deleteTxnsForMonth.run(`${month}%`).changes) || 0;
     stmt.deleteOrphanAccounts.run(); // clear the balance for any account left with no transactions
+    stmt.recomputeAccountBalances.run(); // refresh survivors so balance can't reflect the cleared month
   });
   res.json({ ok: true, deleted });
 });
