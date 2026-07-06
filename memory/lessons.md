@@ -47,3 +47,10 @@
 - **A nested sandbox resolves the parent's `node_modules`** (Node walks up the tree), so
   `branches/redesign-preview/` runs without its own install. But the **distribution zip must bundle
   `node_modules`** (the Mac has no parent tree) — copy it in when packaging.
+- **Verify visual show/hide by COMPUTED display, not `el.hidden`.** A preview-eval that read
+  `element.hidden` reported the empty-state as "hidden" while it was still rendering — the attribute was
+  set, but author CSS (`.kpis`/`.grid`/`.empty-state` set an explicit `display`) beat the UA
+  `[hidden]{display:none}`, so the toggle was a no-op. My self-check passed falsely (2026-07-05); the
+  independent reviewer caught it. **Assert on `getComputedStyle(el).display`**, and keep a global
+  `[hidden]{display:none !important}` reset so `.hidden` toggles actually hide. General rule: verify the
+  rendered effect, not the input you set.

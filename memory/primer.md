@@ -6,18 +6,25 @@ Local-first budget app, **CSV-import** based. Node 24 + Express 5 + built-in `no
 frontend, custom animated SVG charts, no build step, no external data deps, no credentials. Real app runs
 on `:4000`. Owner = single user (Ardent Credit Union). Real data in `data/budget.db` (gitignored).
 
-**Git:** on branch `feature/archive-merchant-learning-yoy` (HEAD `066fc14` = archive-year fix). Pushed to a
-**private GitHub repo `ipaselt/personal-budget`** (default branch `master` @ `821fc59`). The whole feature
-branch is still **REVIEW-PENDING before merge to master** (schema migration + broad multi-file + balance math
-= full-review triggers). Feature-branch pushes aren't gated; the PR/review is the gate before master.
+**Git:** on branch `feature/archive-merchant-learning-yoy` (HEAD `cccc84e`). Pushed earlier to a
+**private GitHub repo `ipaselt/personal-budget`** (default branch `master` @ `821fc59`); the new port commits
+`5b47353` (port) + `cccc84e` (review fixes) are **local, not yet pushed**. The whole feature branch is still
+**REVIEW-PENDING before merge to master** (schema migration + broad multi-file + import-path/balance math =
+full-review triggers). An independent subagent review ran; its one blocker is fixed. **Owner still needs to
+run `/code-review ultra` before the master merge**, then merge. Feature-branch pushes aren't gated.
 
-## ⭐ THIS SESSION (2026-07-05) — frontend redesign, in a SANDBOX (not yet ported)
-Owner wanted the frontend re-imagined (not recolored). Built **"Mission Control"** — a dense dark
-command-center design — as a **full working copy in `branches/redesign-preview/` (GITIGNORED sandbox), runs
-on `:4001`** against its own db copy. **The real app `public/` is UNTOUCHED.** Chosen from 3 previewable
-concepts (Calm Capital / Mission Control / Soft Ledger — static mockups were at `:4001/concepts/*.html`).
+## ⭐ THIS SESSION (2026-07-05) — redesign PORTED to production + first-run polish + data reset
+The "Mission Control" redesign (previously a `branches/redesign-preview/` sandbox on `:4001`) is now **PORTED
+into the real `public/` + `server.js` + `db.js`** — the real app on `:4000` IS the redesign; the sandbox is
+superseded (kept, gitignored). Added this session: **first-run empty state** (no data → "Import your bank CSV"
+CTA, hides the $0 KPIs/charts; needs the `[hidden]{display:none!important}` reset to work — see lessons),
+**import feedback** (`/api/import` → added/duplicates/uncategorized; banner shows them), **red recent-activity
+spending amounts**, and escaping of CSV descriptions in the txn table. **DB reset to a clean 2026 slate**
+(0 txns/accounts/budgets/archived, `active_year=2026`) for the owner's real data; sample + real-data backups
+in `data/budget.*-backup-*.db` (gitignored). Chosen earlier from 3 concepts (Calm Capital / Mission Control /
+Soft Ledger).
 
-Redesign includes (all verified via DOM eval + API curl on :4001):
+Redesign includes (verified via computed-display DOM eval + API curl on :4000):
 - **Icon rail** (left) — clickable: home→Overview, calendar→active year, archive→archived year, import→CSV
   picker; active-state highlight; keyboard-accessible.
 - **Segmented tabs**, **KPI strip** = active-year Income/Spending/Savings/Leftover with **YoY deltas vs prior
@@ -37,10 +44,9 @@ Redesign includes (all verified via DOM eval + API curl on :4001):
 - Old `personal-budget.zip` (original design) left untouched alongside.
 
 ## Next
-- **Decide on the redesign:** port `branches/redesign-preview/` → real `public/` + `server.js` (owner's call).
-  When porting: it's a broad multi-file change → run an independent review first (subagent over the diff),
-  and flag `/code-review ultra` before it lands on master.
-- **FIRST for the existing feature branch: review → merge to master** (still the gate; see Git above).
+- **Owner runs `/code-review ultra`** on the feature branch (the full-trigger gate), then **merge → master**
+  (subagent review already done + blocker fixed). Then the owner imports their real CSV on the clean 2026 DB.
+- Refresh the OneDrive distribution zip from the ported real app if the owner wants the updated build on the Mac.
 - Backlog: **leftover rollover / envelope budgeting** (deferred). Redesign feature ideas proposed; owner
   greenlit only the **insight line** (done) — budget pace/projection, txn search, CSV export were declined for now.
 
