@@ -161,7 +161,10 @@ app.post('/api/import', express.text({ type: '*/*', limit: '15mb' }), (req, res)
       return res.status(400).json({ error: 'Could not find Debit/Credit or Amount columns.' });
 
     const latestByAccount = {};
-    let imported = 0, skipped = 0, maxDate = null;
+    // Ids already in the DB → tells new rows from re-imported duplicates.
+    const existing = new Set(stmt.allTxnIds.all().map((r) => r.transaction_id));
+    const addedIds = new Set();
+    let imported = 0, skipped = 0, added = 0, duplicates = 0, maxDate = null;
 
     inTransaction(() => {
       for (let r = 1; r < rows.length; r++) {
@@ -194,6 +197,8 @@ app.post('/api/import', express.text({ type: '*/*', limit: '15mb' }), (req, res)
 
         stmt.upsertTxn.run(id, account, date, desc, amount, category, balance, pending);
         imported++;
+        if (existing.has(id)) duplicates++;
+        else { added++; existing.add(id); addedIds.add(id); }
         if (!maxDate || date > maxDate) maxDate = date;
 
         if (balance != null) {
@@ -207,7 +212,20 @@ app.post('/api/import', express.text({ type: '*/*', limit: '15mb' }), (req, res)
       applyLearnedRules(); // auto-apply your remembered merchant categories to new rows
     });
 
-    res.json({ ok: true, imported, skipped, latestMonth: maxDate ? maxDate.slice(0, 7) : null });
+    // Uncategorized = newly-added rows whose effective category is still
+    // Miscellaneous (after learned merchant rules ran) — the nudge to fix.
+    let uncategorized = 0;
+    if (addedIds.size) {
+      for (const t of stmt.allTxns.all()) {
+        if (addedIds.has(t.transaction_id) && (t.user_category || t.category) === 'Miscellaneous') uncategorized++;
+      }
+    }
+
+    res.json({
+      ok: true,
+      imported, added, duplicates, uncategorized, skipped,
+      latestMonth: maxDate ? maxDate.slice(0, 7) : null,
+    });
   } catch (err) {
     console.error('Import error:', err);
     res.status(400).json({ error: 'Could not parse CSV: ' + err.message });
@@ -318,6 +336,19 @@ app.get('/api/overview', (req, res) => {
   const budgets = Object.fromEntries(stmt.listBudgets.all().map((b) => [b.category, b.monthly_limit]));
   const c = stmt.counts.get();
 
+  // Active-year slice — drives the budget-progress rows (spent vs a fairly-scaled
+  // budget) and the recent-activity peek on the redesigned Overview.
+  const activeYear = getActiveYear();
+  const yearTxns = allTxns.filter((x) => x.date.startsWith(activeYear));
+  const yt = computeTotals(yearTxns);
+  const yMonthCount = new Set(yearTxns.map((x) => x.date.slice(0, 7))).size || 1;
+  const recent = allTxns.slice(0, 6).map((x) => ({
+    date: x.date,
+    name: x.name,
+    amount: round2(x.amount),
+    category: displayCategory(x),
+  }));
+
   res.json({
     income: round2(t.income),
     spending: round2(t.spending),
@@ -328,11 +359,14 @@ app.get('/api/overview', (req, res) => {
     latest: c.latest,
     months: stmt.distinctMonths.all().map((r) => r.month),
     monthly: monthlySeries(),
-    activeYear: getActiveYear(),
+    activeYear,
     archivedYears: stmt.listArchivedYears.all().map((r) => r.year),
+    recent,
     categories: expenseBuckets().map((b) => ({
       category: b,
-      limit: budgets[b] ?? null,
+      limit: budgets[b] ?? null,                                   // monthly limit (editable)
+      spent: round2(yt.spentByBucket[b] || 0),                     // active-year spend
+      yearLimit: budgets[b] != null ? round2(budgets[b] * yMonthCount) : null, // scaled for the year
       custom: !DEFAULT_BUCKETS.includes(b),
     })),
   });

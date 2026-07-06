@@ -15,14 +15,24 @@ const periodLabel = (t) => {
 };
 
 const PIE = [
-  { key: 'spending', label: 'Spending', color: '#ff6a6a' },
-  { key: 'savings', label: 'Savings', color: '#6d8cff' },
-  { key: 'leftover', label: 'Leftover', color: '#41d68a' },
+  { key: 'spending', label: 'Spending', color: '#ff6a6a', cssVar: '--red' },
+  { key: 'savings', label: 'Savings', color: '#6d8cff', cssVar: '--accent' },
+  { key: 'leftover', label: 'Leftover', color: '#41d68a', cssVar: '--green' },
 ];
+// Sandbox preview: pull the trend-series colors from the active theme's CSS
+// variables so the charts follow the Theme switcher (falls back to the literals).
+function syncThemeColors() {
+  const cs = getComputedStyle(document.documentElement);
+  for (const s of PIE) {
+    const v = cs.getPropertyValue(s.cssVar).trim();
+    if (v) s.color = v;
+  }
+}
+window.syncThemeColors = syncThemeColors;
 // Distinct palette for the per-category breakdown donut (one stable color per bucket).
 const CATEGORY_COLORS = [
-  '#ff6a6a', '#6d8cff', '#41d68a', '#e3b341', '#8b7cff', '#4dd0e1', '#ff9f5a', '#f06595',
-  '#a3e635', '#38bdf8', '#fb7185', '#c084fc', '#2dd4bf', '#facc15', '#94a3b8',
+  '#7c7cf0', '#39d98a', '#f0b429', '#f86a7a', '#a78bfa', '#38bdf8', '#4ade80', '#fb923c',
+  '#f472b6', '#a3e635', '#22d3ee', '#c084fc', '#2dd4bf', '#facc15', '#8a8d9c',
 ];
 const PAGE_SIZE = 10;
 
@@ -60,11 +70,19 @@ async function importCsv(text, name) {
     // Jump to the month we just imported so the new data is immediately visible.
     if (r.latestMonth) active = r.latestMonth;
     await refresh();
-    if (r.imported) {
+    if (r.added) {
+      const parts = [`Added ${r.added.toLocaleString()} transaction${r.added === 1 ? '' : 's'}`];
+      if (r.duplicates) parts.push(`${r.duplicates.toLocaleString()} duplicate${r.duplicates === 1 ? '' : 's'} skipped`);
+      if (r.uncategorized) parts.push(`${r.uncategorized.toLocaleString()} uncategorized`);
+      if (r.skipped) parts.push(`${r.skipped.toLocaleString()} row${r.skipped === 1 ? '' : 's'} skipped`);
       showBanner(
-        `Imported ${r.imported.toLocaleString()} transaction${r.imported === 1 ? '' : 's'}` +
-          (r.skipped ? ` (${r.skipped} rows skipped)` : '') +
-          (r.latestMonth ? ` — showing ${monthLabel(r.latestMonth)}.` : '.'),
+        parts.join(' · ') + (r.latestMonth ? ` — showing ${monthLabel(r.latestMonth)}.` : '.'),
+        r.uncategorized ? 'warn' : 'info'
+      );
+      setTimeout(() => ($('banner').hidden = true), 6000);
+    } else if (r.duplicates) {
+      showBanner(
+        `No new transactions — all ${r.duplicates.toLocaleString()} row${r.duplicates === 1 ? ' was' : 's were'} already imported.`,
         'info'
       );
       setTimeout(() => ($('banner').hidden = true), 5000);
@@ -449,17 +467,41 @@ function renderOverview(o) {
   $('view-overview').hidden = false;
   $('view-month').hidden = true;
 
+  // First-run empty state: no transactions yet → show the import call-to-action
+  // instead of a wall of $0 KPIs and blank charts.
+  const empty = !o.months || o.months.length === 0;
+  $('overview-empty').hidden = !empty;
+  $('kpi-strip').hidden = empty;
+  $('overview-grid').hidden = empty;
+  $('recent-panel').hidden = empty;
+  if (empty) { $('overview-insight').hidden = true; return; }
+
   $('balance-value').textContent = money(o.balance);
   $('balance-sub').textContent = o.accountCount
     ? `across ${o.accountCount} account${o.accountCount === 1 ? '' : 's'}` + (o.latest ? ` · as of ${o.latest}` : '')
     : 'no accounts imported yet';
-  // Donut shows all-time by default; clicking a month in the grid below scopes it
-  // to that month (click again to return to all-time).
+  // The Overview leads with the active year (matching the KPI strip + YoY below).
+  // cur = this year's totals, prev = last year's — summed from the monthly series.
+  const yearSum = (yr) =>
+    o.monthly.reduce(
+      (r, m) => {
+        if (m.month.startsWith(yr)) { r.income += m.income; r.spending += m.spending; r.savings += m.savings; r.leftover += m.leftover; }
+        return r;
+      },
+      { income: 0, spending: 0, savings: 0, leftover: 0 }
+    );
+  const prevYear = String(Number(o.activeYear) - 1);
+  const cur = yearSum(o.activeYear);
+  const prev = yearSum(prevYear);
+  const hasPrev = prev.income || prev.spending || prev.savings || prev.leftover;
+
+  // Donut defaults to the cumulative all-years total (it grows as you add years);
+  // clicking a month in the grid scopes to it, clicking again returns to cumulative.
   const showDonut = (monthKey) => {
     const m = monthKey && o.monthly.find((x) => x.month === monthKey);
     $('overview-chart-title').textContent = m
       ? `Where your income has gone — ${monthLabel(monthKey)}`
-      : 'Where your income has gone (all-time)';
+      : 'Where your income has gone — all years (cumulative)';
     renderDonut('overview-chart', 'overview-legend', m || o);
   };
   showDonut(null);
@@ -468,24 +510,87 @@ function renderOverview(o) {
   // Click a month to scope the donut to it (toggle off by clicking again).
   renderMonthGrid('overview-bars', o.monthly, o.activeYear, showDonut, false, true);
 
-  // Editable budget table — the single source of truth for budgets.
+  // --- KPI strip: active-year totals with year-over-year deltas vs last year ---
+  const yoy = (id, curV, prevV, goodUp) => {
+    const el = $(id);
+    if (!hasPrev || !prevV) { el.textContent = `vs ${prevYear}`; el.className = 'kpi-delta'; return; }
+    const d = Math.round(((curV - prevV) / Math.abs(prevV)) * 100);
+    const up = d >= 0;
+    const good = d === 0 ? null : up === goodUp;
+    el.textContent = `${up ? '▲' : '▼'} ${Math.abs(d)}% vs ${prevYear}`;
+    el.className = 'kpi-delta' + (good === null ? '' : good ? ' up' : ' down');
+  };
+  $('kpi-income').textContent = money(cur.income);
+  yoy('kpi-income-d', cur.income, prev.income, true);
+  $('kpi-spending').textContent = money(cur.spending);
+  yoy('kpi-spending-d', cur.spending, prev.spending, false);
+  $('kpi-savings').textContent = money(cur.savings);
+  yoy('kpi-savings-d', cur.savings, prev.savings, true);
+  $('kpi-leftover').textContent = money(cur.leftover);
+  yoy('kpi-leftover-d', cur.leftover, prev.leftover, true);
+  const saved = cur.income ? Math.round(((cur.income - cur.spending) / cur.income) * 100) : 0;
+  $('kpi-saved').textContent = `${saved}%`;
+  $('kpi-saved-d').textContent = `kept in ${o.activeYear}`;
+  $('kpi-saved-d').className = 'kpi-delta up';
+
+  // --- Plain-English insight line ---
+  const insight = $('overview-insight');
+  insight.hidden = !(o.income || o.spending);
+  if (!insight.hidden) {
+    const over = o.categories
+      .filter((c) => c.yearLimit != null && c.yearLimit > 0 && c.spent > c.yearLimit)
+      .sort((a, b) => b.spent - b.yearLimit - (a.spent - a.yearLimit));
+    const anyBudget = o.categories.some((c) => c.yearLimit != null && c.yearLimit > 0);
+    let budgetMsg;
+    if (!anyBudget) budgetMsg = `no budgets are set for ${o.activeYear} yet.`;
+    else if (over.length === 0) budgetMsg = `every budget is on track for ${o.activeYear}.`;
+    else if (over.length === 1)
+      budgetMsg = `<span class="ins-warn">${over[0].category}</span> is over its ${o.activeYear} budget (${money(over[0].spent)} of ${money(over[0].yearLimit)}).`;
+    else
+      budgetMsg = `<span class="ins-warn">${over.length} budgets</span> are over for ${o.activeYear}: ${over.slice(0, 3).map((c) => c.category).join(', ')}.`;
+    insight.innerHTML = `<span class="ins-dot"></span><span>You've kept <span class="ins-good">${saved}%</span> of your income — ${budgetMsg}</span>`;
+  }
+
+  // --- Budget-progress rows (this year's spend vs the budget) ---
+  $('overview-budget-title').textContent = `Budgets · ${o.activeYear}`;
   $('overview-budget-body').innerHTML = o.categories
-    .map(
-      (row) => `
-      <tr>
-        <td>${row.category}${row.custom ? ` <button class="del-cat" data-cat="${row.category}" title="Delete category">×</button>` : ''}</td>
-        <td class="num"><input class="limit-input" type="number" min="0" step="10"
-          value="${row.limit ?? ''}" data-cat="${row.category}" placeholder="—" /></td>
-      </tr>`
-    )
+    .map((row) => {
+      const hasLimit = row.yearLimit != null && row.yearLimit > 0;
+      const ratio = hasLimit ? row.spent / row.yearLimit : 0;
+      const over = hasLimit && row.spent > row.yearLimit;
+      const w = hasLimit ? Math.min(100, Math.round(ratio * 100)) : 0;
+      const cls = over ? 'over' : ratio >= 1 ? 'full' : '';
+      const val = hasLimit
+        ? `<span class="bp-val ${over ? 'over' : ''}">${money(row.spent)} / ${money(row.yearLimit)}</span>`
+        : `<span class="bp-val none">${row.spent > 0 ? money(row.spent) + ' spent' : 'no budget'}</span>`;
+      return `
+      <div class="bp-row">
+        <span class="bp-name">${row.category}${row.custom ? ` <button class="del-cat" data-cat="${row.category}" title="Delete category">×</button>` : ''}</span>
+        <span class="bp-meta">${val}<input class="bp-input limit-input" type="number" min="0" step="10"
+          value="${row.limit ?? ''}" data-cat="${row.category}" placeholder="—" title="Monthly limit" /></span>
+        ${hasLimit ? `<span class="bp-track"><span class="bp-fill ${cls}" style="width:${w}%"></span></span>` : ''}
+      </div>`;
+    })
     .join('');
   const obody = $('overview-budget-body');
   obody.querySelectorAll('.limit-input').forEach((input) => input.addEventListener('change', () => saveBudget(input)));
   obody.querySelectorAll('.del-cat').forEach((b) => b.addEventListener('click', () => deleteCategory(b.dataset.cat)));
-
   const totalBudget = o.categories.reduce((s, r) => s + (r.limit || 0), 0);
-  $('overview-budget-foot').innerHTML =
-    `<tr class="total-row"><td>Total</td><td class="num">${money(totalBudget)}</td></tr>`;
+  $('overview-budget-total').textContent = money(totalBudget) + ' / mo';
+
+  // --- Recent activity peek ---
+  const esc = (s) => String(s).replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+  $('recent-body').innerHTML =
+    (o.recent || [])
+      .map((r) => {
+        const inFlow = r.amount > 0;
+        return `
+      <div class="rx">
+        <div><div class="rx-name">${esc(r.name)}</div><div class="rx-meta">${r.date} · ${esc(r.category)}</div></div>
+        <span class="rx-amt ${inFlow ? 'in' : ''}">${inFlow ? '+' : ''}${money(r.amount)}</span>
+      </div>`;
+      })
+      .join('') || '<p class="muted small">No transactions yet.</p>';
 }
 
 // --- One period (month / year / all-time) ----------------------------------
@@ -552,9 +657,10 @@ function renderPeriod(p) {
   $('archive-year').hidden = !(isYear && !archived && year !== activeYear);
   $('archive-year').onclick = () => archiveYear(year);
 
-  // Year view drops the budget table and widens the chart panel to the month grid.
-  $('month-budget-panel').hidden = isYear;
-  $('month-chart-panel').classList.toggle('wide', isYear);
+  // Both month and year show the budget panel (left) beside the chart panel (right),
+  // so the year view stays a balanced two-column layout instead of a half-empty panel.
+  $('month-budget-panel').hidden = false;
+  $('month-chart-panel').classList.remove('wide');
   $('month-cat-section').hidden = !isMonth;
 
   if (isMonth) {
@@ -721,10 +827,16 @@ async function refresh() {
     $('banner').hidden = true;
   } else {
     $('institutions').textContent = '';
-    showBanner(
-      `No data yet — open the <strong>${activeYear}</strong> tab, click a month, then <strong>Import CSV</strong> (or add transactions manually). Your data stays on this machine.`,
-      'info'
-    );
+    // On the Overview the empty-state panel already prompts to import, so don't
+    // double up with a banner; only nudge on the year/month views.
+    if (active !== 'overview') {
+      showBanner(
+        `No data yet — open the <strong>${activeYear}</strong> tab, click a month, then <strong>Import CSV</strong> (or add transactions manually). Your data stays on this machine.`,
+        'info'
+      );
+    } else {
+      $('banner').hidden = true;
+    }
   }
 
   const overview = await api('/api/overview');
@@ -743,16 +855,45 @@ async function refresh() {
   if (!validActive) active = 'overview';
 
   renderTabs(shownYears);
+  updateRail();
 
   if (active === 'overview') renderOverview(overview);
   else renderPeriod(await api('/api/summary?period=' + active));
+}
+
+// Highlight the rail icon for the current view (home / year / archived year).
+function updateRail() {
+  const yr = /^\d{4}/.test(active) ? active.slice(0, 4) : null;
+  const isArch = yr && archivedYears.includes(yr);
+  const set = (id, on) => $(id) && $(id).classList.toggle('on', !!on);
+  set('ri-home', active === 'overview');
+  set('ri-year', !!yr && !isArch);
+  set('ri-archive', !!isArch);
 }
 
 $('add-cat-btn').addEventListener('click', addCategory);
 $('new-cat-input').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') addCategory();
 });
+// Icon rail navigation (click + keyboard).
+function railGo(target) {
+  if (target === 'archive') {
+    if (archivedYears.length) { active = archivedYears[0]; refresh(); }
+    else { showBanner('No archived years yet — close out a year with “Start new year”.', 'info'); setTimeout(() => ($('banner').hidden = true), 4000); }
+  } else if (target === 'import') {
+    $('csv-input').click();
+  } else { active = target; refresh(); }
+}
+[['ri-home', 'overview'], ['ri-year', 'year'], ['ri-archive', 'archive'], ['ri-import', 'import']].forEach(([id, t]) => {
+  const el = $(id);
+  if (!el) return;
+  const go = () => railGo(t === 'year' ? activeYear : t);
+  el.addEventListener('click', go);
+  el.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); } });
+});
+
 $('month-import-btn').addEventListener('click', () => $('csv-input').click());
+$('empty-import-btn').addEventListener('click', () => $('csv-input').click());
 $('csv-input').addEventListener('change', async (e) => {
   const file = e.target.files[0];
   if (!file) return;
@@ -761,4 +902,5 @@ $('csv-input').addEventListener('change', async (e) => {
   importCsv(text, file.name);
 });
 
+syncThemeColors(); // match any saved theme before the first render
 refresh().catch((e) => showBanner('Error: ' + e.message, 'error'));

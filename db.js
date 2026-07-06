@@ -82,6 +82,7 @@ export const stmt = {
     `SELECT * FROM transactions WHERE date LIKE ? ORDER BY date DESC, transaction_id`
   ),
   allTxns: db.prepare(`SELECT * FROM transactions ORDER BY date DESC, transaction_id`),
+  allTxnIds: db.prepare(`SELECT transaction_id FROM transactions`),
   distinctMonths: db.prepare(
     `SELECT DISTINCT substr(date, 1, 7) AS month FROM transactions ORDER BY month DESC`
   ),
