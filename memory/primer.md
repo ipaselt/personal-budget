@@ -6,12 +6,11 @@ Local-first budget app, **CSV-import** based. Node 24 + Express 5 + built-in `no
 frontend, custom animated SVG charts, no build step, no external data deps, no credentials. Real app runs
 on `:4000`. Owner = single user (Ardent Credit Union). Real data in `data/budget.db` (gitignored).
 
-**Git:** on branch `feature/archive-merchant-learning-yoy` (HEAD `cccc84e`). Pushed earlier to a
-**private GitHub repo `ipaselt/personal-budget`** (default branch `master` @ `821fc59`); the new port commits
-`5b47353` (port) + `cccc84e` (review fixes) are **local, not yet pushed**. The whole feature branch is still
-**REVIEW-PENDING before merge to master** (schema migration + broad multi-file + import-path/balance math =
-full-review triggers). An independent subagent review ran; its one blocker is fixed. **Owner still needs to
-run `/code-review ultra` before the master merge**, then merge. Feature-branch pushes aren't gated.
+**Git:** **`master` @ `9f3330e`, pushed to private GitHub `ipaselt/personal-budget`** — the feature branch
+`feature/archive-merchant-learning-yoy` (merchant learning, year rollover/archive, YoY, chart redesign,
+archive-year fix, the redesign port + first-run polish + ultra-review fixes) fast-forward-merged to master
+this session. Reviewed before merge: an independent subagent pass + a local max-effort multi-agent pass
+(cloud `ultrareview` unavailable in-session); blockers fixed. The old feature branch ref still exists locally.
 
 ## ⭐ THIS SESSION (2026-07-05) — redesign PORTED to production + first-run polish + data reset
 The "Mission Control" redesign (previously a `branches/redesign-preview/` sandbox on `:4001`) is now **PORTED
@@ -44,9 +43,11 @@ Redesign includes (verified via computed-display DOM eval + API curl on :4000):
 - Old `personal-budget.zip` (original design) left untouched alongside.
 
 ## Next
-- **Owner runs `/code-review ultra`** on the feature branch (the full-trigger gate), then **merge → master**
-  (subagent review already done + blocker fixed). Then the owner imports their real CSV on the clean 2026 DB.
-- Refresh the OneDrive distribution zip from the ported real app if the owner wants the updated build on the Mac.
+- **Owner imports their real bank CSV** on the clean 2026 DB (`master` app, `:4000`) — real testing.
+- Refresh the OneDrive distribution zip from the merged real app if the owner wants the updated build on the Mac.
+- **Deferred ultra-review items (not blockers):** dedup id folds in running balance → re-export double-count
+  (design trade-off, not a quick fix); redundant full-table reads on `/api/overview` `/api/import` `/api/summary`
+  (negligible at scale). Details in [CLAUDE.md](../CLAUDE.md) "Next up".
 - Backlog: **leftover rollover / envelope budgeting** (deferred). Redesign feature ideas proposed; owner
   greenlit only the **insight line** (done) — budget pace/projection, txn search, CSV export were declined for now.
 
