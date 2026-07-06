@@ -37,6 +37,10 @@
 }
 
 * { box-sizing: border-box; }
+/* The [hidden] attribute must win over author display rules (.kpis/.grid/
+   .empty-state/.insight-bar all set an explicit display), or JS .hidden toggles
+   silently do nothing. */
+[hidden] { display: none !important; }
 
 body {
   margin: 0;

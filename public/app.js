@@ -1,4 +1,6 @@
 const $ = (id) => document.getElementById(id);
+// Escape user-supplied text (CSV descriptions) before it goes into innerHTML.
+const esc = (s) => String(s).replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
 const money = (n) =>
   (n < 0 ? '-' : '') + '$' + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 // Compact dollar label for bar overlays, e.g. 1640 -> "$1.6k", 262 -> "$262".
@@ -360,7 +362,7 @@ function txnRowHtml(t) {
     .join('');
   return `
     <td class="muted">${t.date}</td>
-    <td>${t.name}${t.pending ? ' <span class="pending">pending</span>' : ''}</td>
+    <td>${esc(t.name)}${t.pending ? ' <span class="pending">pending</span>' : ''}</td>
     <td><select class="cat-select" data-txn="${t.transaction_id}"${txnReadOnly ? ' disabled' : ''}>${opts}</select></td>
     <td class="num ${isIn ? 'positive' : 'negative'}">${isIn ? '+' : '-'}${money(Math.abs(t.amount))}</td>`;
 }
@@ -535,7 +537,7 @@ function renderOverview(o) {
 
   // --- Plain-English insight line ---
   const insight = $('overview-insight');
-  insight.hidden = !(o.income || o.spending);
+  insight.hidden = !(cur.income || cur.spending);
   if (!insight.hidden) {
     const over = o.categories
       .filter((c) => c.yearLimit != null && c.yearLimit > 0 && c.spent > c.yearLimit)
@@ -579,7 +581,6 @@ function renderOverview(o) {
   $('overview-budget-total').textContent = money(totalBudget) + ' / mo';
 
   // --- Recent activity peek ---
-  const esc = (s) => String(s).replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
   $('recent-body').innerHTML =
     (o.recent || [])
       .map((r) => {
