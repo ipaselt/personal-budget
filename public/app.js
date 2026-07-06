@@ -21,8 +21,9 @@ const PIE = [
   { key: 'savings', label: 'Savings', color: '#6d8cff', cssVar: '--accent' },
   { key: 'leftover', label: 'Leftover', color: '#41d68a', cssVar: '--green' },
 ];
-// Sandbox preview: pull the trend-series colors from the active theme's CSS
-// variables so the charts follow the Theme switcher (falls back to the literals).
+// Keep the chart trend-series colors in sync with the CSS theme variables
+// (--red/--accent/--green) so the palette has one source of truth; falls back
+// to the literal hex in PIE if a variable is missing.
 function syncThemeColors() {
   const cs = getComputedStyle(document.documentElement);
   for (const s of PIE) {
@@ -250,8 +251,11 @@ function renderMonthGrid(containerId, monthly, year, onSelect, allCells = false,
   const el = $(containerId);
   el.className = 'month-grid';
   const byMonth = Object.fromEntries((monthly || []).map((m) => [m.month, m]));
-  // Shared scale across the year so the months are visually comparable.
-  const max = Math.max(1, ...(monthly || []).flatMap((m) => PIE.map((s) => m[s.key] || 0)));
+  // Shared scale across THIS year's months only, so bars stay comparable within
+  // the year (and don't flatten as bigger months from other years accumulate).
+  const yearStr = String(year);
+  const thisYear = (monthly || []).filter((m) => m.month.startsWith(yearStr));
+  const max = Math.max(1, ...thisYear.flatMap((m) => PIE.map((s) => m[s.key] || 0)));
 
   const W = 100, barW = 18, gap = 10, topPad = 12, plotH = 46, baseY = topPad + plotH, svgH = baseY + 2;
   const x0 = (W - (barW * PIE.length + gap * (PIE.length - 1))) / 2;
@@ -746,7 +750,8 @@ function setupMonthForm(period) {
   const date = $('txn-date');
   date.value = `${period}-01`; // default to the 1st of the open month
   date.min = `${period}-01`;
-  date.max = `${period}-28`;
+  const [py, pm] = period.split('-').map(Number);
+  date.max = `${period}-${String(new Date(py, pm, 0).getDate()).padStart(2, '0')}`; // real last day (28-31)
   $('txn-cat').innerHTML = categoryOptions.map((c) => `<option>${c}</option>`).join('');
   // Assign (not addEventListener) so handlers don't stack across re-renders.
   $('add-txn-form').onsubmit = (e) => { e.preventDefault(); addTransaction(period); };
