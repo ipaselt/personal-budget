@@ -7,7 +7,9 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const dataDir = join(__dirname, 'data');
+// Default to ./data for `npm start`; the Electron wrapper overrides this with a
+// writable OS user-data path, since a packaged app bundle is read-only.
+const dataDir = process.env.BUDGET_DATA_DIR || join(__dirname, 'data');
 mkdirSync(dataDir, { recursive: true });
 
 export const db = new DatabaseSync(join(dataDir, 'budget.db'));

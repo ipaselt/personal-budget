@@ -1,12 +1,13 @@
 # Primer — personal-budget
-*Rewrite each session. Last updated: 2026-07-05.*
+*Rewrite each session. Last updated: 2026-07-06.*
 
 ## State
 Local-first budget app, **CSV-import** based. Node 24 + Express 5 + built-in `node:sqlite`; vanilla-JS
 frontend, custom animated SVG charts, no build step, no external data deps, no credentials. Real app runs
 on `:4000`. Owner = single user (Ardent Credit Union). **In REAL USE now**: after the 2026 reset the owner
 began importing their real bank CSV — `data/budget.db` (gitignored) holds real financial data (back up before
-any mutating test).
+any mutating test). **Desktop app (Electron) added 2026-07-06** to share with friends (each runs their own local
+copy) — `electron/main.mjs` hosts `server.js` in-process; per-user DB in the OS user-data dir via `BUDGET_DATA_DIR`.
 
 **Git:** **`master` @ `9f3330e`, pushed to private GitHub `ipaselt/personal-budget`** — the feature branch
 `feature/archive-merchant-learning-yoy` (merchant learning, year rollover/archive, YoY, chart redesign,
@@ -45,6 +46,9 @@ Redesign includes (verified via computed-display DOM eval + API curl on :4000):
 - Old `personal-budget.zip` (original design) left untouched alongside.
 
 ## Next
+- **Share the desktop app with a friend:** build the `.dmg` ON a Mac (`npm install && npm run dist:mac`) — can't
+  cross-build from Windows. Then decide signing (unsigned + right-click→Open past Gatekeeper, or ~$99/yr Apple
+  Developer to open clean). **Owner isn't a fan of the current app icon** (`build/icon.svg`/`.png`) — redesign later.
 - **Owner is importing real data** (`master` app, `:4000`) — watch for merchants landing in Miscellaneous
   (self-serve via the row dropdown + merchant learning); tune `RULES` only if asked.
 - Refresh the OneDrive distribution zip from the merged real app if the owner wants the updated build on the Mac.

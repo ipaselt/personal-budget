@@ -4,15 +4,52 @@
   "private": true,
   "type": "module",
   "description": "Local-first personal budget planner (CSV import)",
+  "main": "electron/main.mjs",
   "engines": {
     "node": ">=22.5"
   },
   "scripts": {
     "start": "node --no-warnings server.js",
-    "dev": "node --no-warnings --watch server.js"
+    "dev": "node --no-warnings --watch server.js",
+    "app": "electron .",
+    "dist:mac": "electron-builder --mac",
+    "dist:win": "electron-builder --win"
   },
   "dependencies": {
     "dotenv": "^17.4.2",
     "express": "^5.2.1"
+  },
+  "devDependencies": {
+    "electron": "^43.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.personalbudget.desktop",
+    "productName": "Personal Budget",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "electron/**/*",
+      "server.js",
+      "db.js",
+      "public/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.finance",
+      "icon": "build/icon.png"
+    },
+    "win": {
+      "target": [
+        "portable"
+      ],
+      "icon": "build/icon.png"
+    }
   }
 }

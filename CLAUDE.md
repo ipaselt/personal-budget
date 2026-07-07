@@ -11,6 +11,8 @@ personal-budget/
 ├── server.js          — Express server: CSV import + API + serves the frontend
 ├── db.js              — SQLite storage (node:sqlite, no native build) + prepared statements
 ├── public/            — frontend (index.html, app.js, style.css) — no build step
+├── electron/          — desktop wrapper (main.mjs: hosts server.js in-process, opens a window)
+├── build/             — electron-builder resources (icon.svg source + icon.png) — COMMITTED, not output
 ├── data/              — budget.db lives here (GITIGNORED: holds your financial data)
 ├── .env               — only PORT now (GITIGNORED) · .env.example is the template
 ├── docs/README.md     — run + setup instructions
@@ -20,7 +22,7 @@ personal-budget/
 ## Stack · Routing · Commands
 - **Stack:** Node 24 + Express 5 · built-in `node:sqlite` · vanilla-JS frontend (custom animated SVG donut; no React/Tailwind/Chart.js, no build step).
 - **Routing:** CSV parse/categorize + API → `server.js`; storage/schema → `db.js`; UI → `public/`.
-- **Commands:** `npm install` · `npm start` (→ http://localhost:4000) · `npm run dev` (auto-reload).
+- **Commands:** `npm install` · `npm start` (→ http://localhost:4000) · `npm run dev` (auto-reload) · `npm run app` (Electron desktop window) · `npm run dist:mac` / `dist:win` (package a distributable — **`dist:mac` must run ON a Mac**).
 - **No external dependencies for data:** no Plaid, no network calls to a bank, no credentials.
 
 ## How it works
@@ -38,7 +40,8 @@ personal-budget/
 ## Conventions
 - One fact, one location; lowercase-hyphen naming. No secrets needed; `.env` holds only PORT.
 
-## Current State (2026-07-05)
+## Current State (2026-07-06)
+- 🖥️ **Desktop app (Electron) added (2026-07-06)** so the owner can share copies with friends who each run their own local instance (data stays on their machine). `electron/main.mjs` hosts `server.js` in-process on a free port and opens a window; the SQLite DB is redirected to the OS user-data dir (`BUDGET_DATA_DIR`, since a packaged bundle is read-only) so each user gets an isolated DB that opens to the first-run empty state. `db.js`/`server.js` edits are backward-compatible (`npm start` unchanged, verified). App icon in `build/`. Verified end-to-end incl. a real packaged build (asar has no `data`/`.env`/`.db` leak). **The Mac `.dmg` must be built ON a Mac** (`npm run dist:mac`) — can't cross-build from Windows. Signing decision still open (unsigned + right-click-Open vs. ~$99/yr Apple Developer). See `memory/decisions.md`.
 - ⭐ **Frontend redesign "Mission Control" is LIVE on `master`** (`821fc59` → `9f3330e`, pushed to private GitHub `ipaselt/personal-budget`). The real app is the redesign; `branches/redesign-preview/` sandbox is superseded (kept, gitignored). Shipped this session: **first-run empty state** (no data → import CTA, hides the $0 KPIs/charts), **import feedback** (`/api/import` → added/duplicates/uncategorized), **red recent-activity spending**, per-year month-grid scaling, real last-day date cap, `clear_month` balance recompute, `[hidden]` CSS reset, txn-description escaping. Google Fonts stripped (offline).
 - ✅ **Reviewed before merge:** independent subagent review + a local max-effort multi-agent review (cloud `ultrareview` unavailable in-session). Blockers fixed; merchant-learning kept global by owner choice; dedup + efficiency items deferred to backlog (below). See `memory/decisions.md`.
 - 🧹 **App is in REAL USE now** (`active_year=2026`): owner reset to a clean 2026 slate, then began importing their real bank CSV — `data/budget.db` (gitignored) now holds real financial data, not sample. Sample + earlier real-data backups in `data/budget.*-backup-*.db` (gitignored). **Never test mutations against it — back up first.**

@@ -23,9 +23,9 @@ branches/
 .DS_Store
 Thumbs.db
 
-# Build output
+# Build output (note: build/ is committed — it holds electron-builder resources
+# like the app icon, not output; packaged output goes to dist/)
 dist/
-build/
 out/
 .next/
 .nuxt/

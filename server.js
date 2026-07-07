@@ -501,6 +501,9 @@ app.post('/api/unarchive_year', (req, res) => {
   res.json({ ok: true, activeYear: getActiveYear() });
 });
 
+// Exported so the Electron wrapper (electron/main.mjs) can host the API in-process.
+export { app };
+
 const port = process.env.PORT || 4000;
 // Only start the server when run directly (so the categorizer can be imported for tests).
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
