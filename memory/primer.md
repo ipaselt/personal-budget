@@ -11,11 +11,14 @@ copy) — `electron/main.mjs` hosts `server.js` in-process; per-user DB in the O
 **Import preview + generic parser + uncategorized triage added 2026-07-07** (for friends on different banks):
 preview→confirm modal before saving, bank-agnostic column/date detection, and an amber "needs category" marker +
 "Needs category · N" filter (flag = not-yet-reviewed; picking any category, incl. Miscellaneous, clears it).
+**Multi-format import added 2026-07-07**: also reads **QFX/OFX** and **Excel (XLS/XLSX)**, not just CSV —
+`analyzeImport()` sniffs bytes and dispatches (Excel via SheetJS `xlsx@0.20.3` patched CDN build; OFX dedups on FITID).
 
 **Git:** **`master`, pushed to private GitHub `ipaselt/personal-budget`.** Recent commits: Mission Control
-redesign (`9f3330e`) → Electron desktop wrapper (`2a07153`) → import preview + generic parser + triage (this
-commit). Each landed on master after an independent fresh-context subagent review (light path); blockers fixed.
-Direct-to-master commits are allowed here (solo, non-orchestrated), gated by the pre-push review hook.
+redesign (`9f3330e`) → Electron desktop wrapper (`2a07153`) → import preview + generic parser + triage (`a38486f`)
+→ multi-format QFX/Excel import (this commit). Each landed on master after an independent fresh-context subagent
+review (light path); blockers fixed. Direct-to-master commits are allowed here (solo, non-orchestrated), gated by
+the pre-push review hook.
 
 ## ⭐ THIS SESSION (2026-07-05) — redesign PORTED to production + first-run polish + data reset
 The "Mission Control" redesign (previously a `branches/redesign-preview/` sandbox on `:4001`) is now **PORTED

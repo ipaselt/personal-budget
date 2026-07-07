@@ -136,6 +136,25 @@ purpose** — sets `user_category` and clears the flag. Owner chose this (over a
 the amber previously nagged every Miscellaneous row forever, including ones deliberately left as Misc. Flag =
 "you haven't looked at this yet," which is the actually-useful signal after an import.
 
+## 2026-07-07 — Multi-format import (QFX/OFX + Excel), server-side, one pipeline
+Not every bank exports CSV, so import now also reads **QFX/OFX** and **Excel (XLS/XLSX)**. Design: the frontend
+sends **raw bytes** (`file.arrayBuffer()`) to `express.raw` endpoints; `analyzeImport(buf, name)` **sniffs the bytes**
+(`PK`→xlsx, `D0CF11E0`→legacy .xls, `OFXHEADER`/`<OFX>`→OFX, else CSV) and normalizes into the SAME record shape
+that already feeds dedup/categorize/preview/triage. CSV and Excel both reduce to rows → shared `rowsToRecords()`
+(so the Chase-safe column detection is reused); OFX has its own `ofxToRecords()`. Parsing is **server-side** (deps
+in node_modules, bundled for Electron) — not vendored into the frontend. Verified all 3 formats parse + import +
+dedup on an isolated temp DB. Cross-format caveat: OFX dedups on the bank's **FITID**, CSV/Excel on the content
+hash, so the *same* statement imported as both would double-count — acceptable (users pick one format per bank).
+
+## 2026-07-07 — Excel via SheetJS, patched CDN build (not npm's frozen 0.18.5)
+Legacy `.xls` (OLE/BIFF binary) needs a real reader; `exceljs` can't read old `.xls`, so **SheetJS (`xlsx`)** it is.
+npm's `xlsx` is frozen at **0.18.5**, which carries prototype-pollution (CVE-2023-30533) + ReDoS (CVE-2024-22363)
+advisories; the patched versions live only on SheetJS's own CDN. Since this is financial software distributed to
+friends, installed the **patched `xlsx@0.20.3` from `https://cdn.sheetjs.com/...`** (owner-authorized; the auto
+classifier blocks an agent installing it unprompted). Trade-off accepted: a **URL dependency** in package.json
+(needs CDN reachable at `npm install` time) in exchange for a clean `npm audit`. Real risk was low (files come from
+the user's own bank, local app), but good hygiene for shared money software.
+
 ## 2026-07-05 — clear_month recomputes surviving account balances
 Ultra-review finding: `clear_month` deleted a month's txns and dropped orphan accounts but never refreshed
 `accounts.current_balance`, so clearing the latest month could leave the balance KPI showing a value from the

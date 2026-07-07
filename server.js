@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import express from 'express';
+import * as XLSX from 'xlsx';
 import { createHash, randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -149,15 +150,14 @@ function computeTotals(txns) {
 
 // --- API -------------------------------------------------------------------
 
-// Parse raw CSV text: auto-detect columns and build transaction records, WITHOUT
-// touching the DB. Shared by /api/import_preview (show + confirm) and /api/import
-// (save), so the preview reflects exactly what an import would store.
-// Returns { error } on a header/format problem, else { detected, records, skipped }.
-function analyzeCsv(text) {
-  const rows = parseCSV(text || '');
-  if (rows.length < 2) return { error: 'CSV has no data rows.' };
+// Build transaction records from tabular rows (array-of-arrays, row 0 = header) by
+// auto-detecting columns. Shared by CSV and spreadsheet (XLS/XLSX) imports — both
+// reduce to rows, so the column detection lives here once.
+// Returns { error } on a header problem, else { detected, records, skipped }.
+function rowsToRecords(rows) {
+  if (!rows || rows.length < 2) return { error: 'File has no data rows.' };
 
-  const rawHeader = rows[0].map((h) => h.trim());
+  const rawHeader = rows[0].map((h) => String(h == null ? '' : h).trim());
   const header = rawHeader.map((h) => h.toLowerCase());
   const find = (...names) => header.findIndex((h) => names.some((n) => h.includes(n)));
   const col = {
@@ -176,33 +176,34 @@ function analyzeCsv(text) {
   };
   if (col.desc < 0) col.desc = find('merchant', 'details', 'narration', 'narrative');
   if (col.date < 0 || col.desc < 0)
-    return { error: 'Could not find Date and Description columns in the CSV header.' };
+    return { error: 'Could not find Date and Description columns in the header.' };
   if (col.debit < 0 && col.credit < 0 && col.amount < 0)
     return { error: 'Could not find Debit/Credit or Amount columns.' };
 
+  const cell = (row, i) => (i >= 0 && row[i] != null ? String(row[i]) : '');
   const records = [];
   let skipped = 0;
   for (let r = 1; r < rows.length; r++) {
     const row = rows[r];
-    if (!row.length || row.every((c) => !c || !c.trim())) continue; // blank line
+    if (!row || !row.length || row.every((c) => c == null || !String(c).trim())) continue; // blank line
 
-    const date = parseDate(row[col.date]);
+    const date = parseDate(cell(row, col.date));
     if (!date) { skipped++; continue; }
-    const desc = (row[col.desc] || '').trim();
-    const account = col.account >= 0 ? (row[col.account] || '').trim() || 'account' : 'account';
+    const desc = cell(row, col.desc).trim();
+    const account = col.account >= 0 ? cell(row, col.account).trim() || 'account' : 'account';
 
     let amount;
     if (col.debit >= 0 || col.credit >= 0) {
-      const debit = col.debit >= 0 ? Math.abs(num(row[col.debit])) : 0;
-      const credit = col.credit >= 0 ? Math.abs(num(row[col.credit])) : 0;
+      const debit = col.debit >= 0 ? Math.abs(num(cell(row, col.debit))) : 0;
+      const credit = col.credit >= 0 ? Math.abs(num(cell(row, col.credit))) : 0;
       amount = credit > 0 ? credit : -debit; // + = money in, - = money out
     } else {
-      amount = num(row[col.amount]); // negative = outflow
+      amount = num(cell(row, col.amount)); // negative = outflow
     }
     if (amount === 0) { skipped++; continue; }
 
-    const balance = col.balance >= 0 ? num(row[col.balance]) : null;
-    const pending = col.status >= 0 && /pending/i.test(row[col.status] || '') ? 1 : 0;
+    const balance = col.balance >= 0 ? num(cell(row, col.balance)) : null;
+    const pending = col.status >= 0 && /pending/i.test(cell(row, col.status)) ? 1 : 0;
     const category = categorize(desc, amount > 0);
     const id = createHash('sha1')
       .update([account, date, desc, amount, balance].join('|'))
@@ -225,12 +226,85 @@ function analyzeCsv(text) {
   return { detected, records, skipped };
 }
 
+// Parse an OFX/QFX statement (Quicken/Money export) into records. OFX is a
+// structured financial format: each <STMTTRN> carries a signed amount, a posted
+// date, a description, and a bank-assigned unique id (FITID) — a better dedup key
+// than the CSV hash. Balance is per-statement (LEDGERBAL), not per-row.
+function ofxToRecords(text) {
+  const field = (block, name) => {
+    const m = block.match(new RegExp(`<${name}>([^<\\r\\n]*)`, 'i'));
+    return m ? m[1].trim() : '';
+  };
+  const account = field(text, 'ACCTID') || 'account';
+  const ledgerBal = (text.match(/<LEDGERBAL>[\s\S]*?<BALAMT>([^<\r\n]*)/i) || [])[1];
+  const blocks = text.match(/<STMTTRN>[\s\S]*?<\/STMTTRN>/gi) || [];
+  if (!blocks.length) return { error: 'No transactions (<STMTTRN>) found in the OFX/QFX file.' };
+
+  const records = [];
+  let skipped = 0, maxDate = null, newestIdx = -1;
+  for (const b of blocks) {
+    const dt = field(b, 'DTPOSTED'); // e.g. 20260702120000.000[0:GMT]
+    const date = /^\d{8}/.test(dt) ? `${dt.slice(0, 4)}-${dt.slice(4, 6)}-${dt.slice(6, 8)}` : null;
+    const amount = num(field(b, 'TRNAMT')); // already signed: + in / - out
+    if (!date || amount === 0) { skipped++; continue; }
+    const desc = (field(b, 'MEMO') || field(b, 'NAME')).trim();
+    const fitid = field(b, 'FITID');
+    const id = fitid
+      ? createHash('sha1').update(`ofx|${account}|${fitid}`).digest('hex').slice(0, 16)
+      : createHash('sha1').update([account, date, desc, amount].join('|')).digest('hex').slice(0, 16);
+    const category = categorize(desc, amount > 0);
+    records.push({ id, account, date, desc, amount, category, balance: null, pending: 0 });
+    if (!maxDate || date > maxDate) { maxDate = date; newestIdx = records.length - 1; }
+  }
+  // No per-row running balance in OFX; attach the statement ledger balance to the
+  // newest transaction so the Balance KPI reflects the account after import.
+  if (newestIdx >= 0 && ledgerBal) records[newestIdx].balance = num(ledgerBal);
+
+  const detected = {
+    date: 'DTPOSTED', description: 'MEMO / NAME', amount: 'TRNAMT (signed)',
+    balance: ledgerBal ? 'LEDGERBAL' : null,
+    account: field(text, 'ACCTID') ? 'ACCTID' : null,
+  };
+  return { detected, records, skipped };
+}
+
+// Dispatch an uploaded import file to the right parser by sniffing its bytes
+// (filename is only a hint). Returns { error } or { format, detected, records, skipped }.
+function analyzeImport(buf, nameHint = '') {
+  if (!Buffer.isBuffer(buf) || !buf.length) return { error: 'Empty file.' };
+  const isZip = buf[0] === 0x50 && buf[1] === 0x4b;                        // "PK"  → xlsx (zip)
+  const isOle = buf[0] === 0xd0 && buf[1] === 0xcf && buf[2] === 0x11;     // OLE  → legacy .xls
+  const ext = (nameHint.match(/\.([a-z0-9]+)$/i) || [, ''])[1].toLowerCase();
+
+  if (isZip || isOle || ext === 'xls' || ext === 'xlsx') {
+    let rows;
+    try {
+      const wb = XLSX.read(buf, { type: 'buffer' });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      rows = XLSX.utils.sheet_to_json(ws, { header: 1, blankrows: false, raw: false, defval: '' });
+    } catch (e) {
+      return { error: 'Could not read the spreadsheet: ' + e.message };
+    }
+    const out = rowsToRecords(rows);
+    return out.error ? out : { format: 'Excel', ...out };
+  }
+
+  const text = buf.toString('utf8');
+  if (/^\s*OFXHEADER|<OFX>/i.test(text)) {
+    const out = ofxToRecords(text);
+    return out.error ? out : { format: 'OFX/QFX', ...out };
+  }
+
+  const out = rowsToRecords(parseCSV(text));
+  return out.error ? out : { format: 'CSV', ...out };
+}
+
 // Preview an import: report the detected columns, a sample of parsed rows, and
 // how many are new vs. already-imported — WITHOUT saving. Lets the user confirm
 // the CSV parsed correctly (right dates/amounts/signs) before committing.
-app.post('/api/import_preview', express.text({ type: '*/*', limit: '15mb' }), (req, res) => {
+app.post('/api/import_preview', express.raw({ type: '*/*', limit: '25mb' }), (req, res) => {
   try {
-    const a = analyzeCsv(req.body || '');
+    const a = analyzeImport(req.body, req.query.name || '');
     if (a.error) return res.status(400).json({ error: a.error });
 
     const existing = new Set(stmt.allTxnIds.all().map((r) => r.transaction_id));
@@ -243,16 +317,16 @@ app.post('/api/import_preview', express.text({ type: '*/*', limit: '15mb' }), (r
     const samples = a.records.slice(0, 8).map((r) => ({
       date: r.date, desc: r.desc, amount: r.amount, category: r.category,
     }));
-    res.json({ ok: true, detected: a.detected, samples, newCount, duplicateCount, skipped: a.skipped });
+    res.json({ ok: true, format: a.format, detected: a.detected, samples, newCount, duplicateCount, skipped: a.skipped });
   } catch (err) {
     console.error('Preview error:', err);
-    res.status(400).json({ error: 'Could not parse CSV: ' + err.message });
+    res.status(400).json({ error: 'Could not read the file: ' + err.message });
   }
 });
 
-app.post('/api/import', express.text({ type: '*/*', limit: '15mb' }), (req, res) => {
+app.post('/api/import', express.raw({ type: '*/*', limit: '25mb' }), (req, res) => {
   try {
-    const a = analyzeCsv(req.body || '');
+    const a = analyzeImport(req.body, req.query.name || '');
     if (a.error) return res.status(400).json({ error: a.error });
 
     const latestByAccount = {};
@@ -295,7 +369,7 @@ app.post('/api/import', express.text({ type: '*/*', limit: '15mb' }), (req, res)
     });
   } catch (err) {
     console.error('Import error:', err);
-    res.status(400).json({ error: 'Could not parse CSV: ' + err.message });
+    res.status(400).json({ error: 'Could not read the file: ' + err.message });
   }
 });
 

@@ -67,14 +67,14 @@ function showBanner(html, kind = 'info') {
   b.hidden = false;
 }
 
-// --- CSV import ------------------------------------------------------------
-async function importCsv(text, name) {
-  showBanner(`Importing ${name}…`);
+// --- Import (CSV / Excel / QFX) --------------------------------------------
+async function commitImport(buf, name) {
+  showBanner(`Importing ${esc(name)}…`);
   try {
-    const r = await api('/api/import', {
+    const r = await api('/api/import?name=' + encodeURIComponent(name), {
       method: 'POST',
-      headers: { 'Content-Type': 'text/csv' },
-      body: text,
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: buf,
     });
     // Jump to the month we just imported so the new data is immediately visible.
     if (r.latestMonth) active = r.latestMonth;
@@ -114,7 +114,7 @@ async function importCsv(text, name) {
     } else {
       showBanner(
         `No transactions imported${r.skipped ? ` — ${r.skipped} rows skipped` : ''}. ` +
-          `Check that the CSV has Date, Description, and Debit/Credit (or Amount) columns.`,
+          `Check that the file has Date, Description, and an amount (or Debit/Credit).`,
         'warn'
       );
     }
@@ -124,21 +124,22 @@ async function importCsv(text, name) {
 }
 
 // Step 1 of import: parse on the server (no save) and show a preview so the user
-// can confirm the CSV was read correctly before anything is written.
-let pendingImport = null; // { text, name } held between preview and confirm
-async function previewCsv(text, name) {
+// can confirm the file was read correctly before anything is written. Sends the
+// raw bytes so binary formats (Excel) work; the server sniffs CSV/Excel/QFX.
+let pendingImport = null; // { buf, name } held between preview and confirm
+async function previewImport(buf, name) {
   showBanner(`Reading ${esc(name)}…`);
   try {
-    const r = await api('/api/import_preview', {
+    const r = await api('/api/import_preview?name=' + encodeURIComponent(name), {
       method: 'POST',
-      headers: { 'Content-Type': 'text/csv' },
-      body: text,
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: buf,
     });
     $('banner').hidden = true;
-    pendingImport = { text, name };
+    pendingImport = { buf, name };
     renderImportPreview(r, name);
   } catch (e) {
-    showBanner('Could not read CSV: ' + e.message, 'error');
+    showBanner('Could not read file: ' + e.message, 'error');
   }
 }
 
@@ -146,6 +147,7 @@ function renderImportPreview(r, name) {
   const d = r.detected;
   const chip = (label, val) => (val ? `<span class="chip"><b>${esc(label)}</b>${esc(val)}</span>` : '');
   $('import-detected').innerHTML =
+    chip('Format', r.format) +
     chip('Date', d.date) + chip('Description', d.description) + chip('Amount', d.amount) +
     chip('Balance', d.balance) + chip('Account', d.account);
 
@@ -182,10 +184,10 @@ $('import-modal').addEventListener('click', (e) => { if (e.target === $('import-
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('import-modal').hidden) closeImportModal(); });
 $('import-confirm').addEventListener('click', () => {
   if (!pendingImport) return;
-  const { text, name } = pendingImport;
+  const { buf, name } = pendingImport;
   $('import-modal').hidden = true;
   pendingImport = null;
-  importCsv(text, name); // step 2: actually save
+  commitImport(buf, name); // step 2: actually save
 });
 
 // --- Donut chart (animated SVG, hover-linked legend + live center) ----------
@@ -1025,9 +1027,9 @@ $('empty-import-btn').addEventListener('click', () => $('csv-input').click());
 $('csv-input').addEventListener('change', async (e) => {
   const file = e.target.files[0];
   if (!file) return;
-  const text = await file.text();
+  const buf = await file.arrayBuffer(); // raw bytes so binary (Excel) survives the round-trip
   e.target.value = ''; // allow re-importing the same file
-  previewCsv(text, file.name);
+  previewImport(buf, file.name);
 });
 
 syncThemeColors(); // match any saved theme before the first render
