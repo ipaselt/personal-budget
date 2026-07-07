@@ -4,7 +4,9 @@
 ## State
 Local-first budget app, **CSV-import** based. Node 24 + Express 5 + built-in `node:sqlite`; vanilla-JS
 frontend, custom animated SVG charts, no build step, no external data deps, no credentials. Real app runs
-on `:4000`. Owner = single user (Ardent Credit Union). Real data in `data/budget.db` (gitignored).
+on `:4000`. Owner = single user (Ardent Credit Union). **In REAL USE now**: after the 2026 reset the owner
+began importing their real bank CSV — `data/budget.db` (gitignored) holds real financial data (back up before
+any mutating test).
 
 **Git:** **`master` @ `9f3330e`, pushed to private GitHub `ipaselt/personal-budget`** — the feature branch
 `feature/archive-merchant-learning-yoy` (merchant learning, year rollover/archive, YoY, chart redesign,
@@ -43,7 +45,8 @@ Redesign includes (verified via computed-display DOM eval + API curl on :4000):
 - Old `personal-budget.zip` (original design) left untouched alongside.
 
 ## Next
-- **Owner imports their real bank CSV** on the clean 2026 DB (`master` app, `:4000`) — real testing.
+- **Owner is importing real data** (`master` app, `:4000`) — watch for merchants landing in Miscellaneous
+  (self-serve via the row dropdown + merchant learning); tune `RULES` only if asked.
 - Refresh the OneDrive distribution zip from the merged real app if the owner wants the updated build on the Mac.
 - **Deferred ultra-review items (not blockers):** dedup id folds in running balance → re-export double-count
   (design trade-off, not a quick fix); redundant full-table reads on `/api/overview` `/api/import` `/api/summary`
