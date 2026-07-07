@@ -42,6 +42,12 @@ const PAGE_SIZE = 10;
 const txnState = {}; // tbodyId -> { txns, page, pagerId }
 let categoryOptions = []; // assignable categories for the per-transaction dropdown
 let txnReadOnly = false; // true when viewing an archived month (disables recategorize)
+let txnFilter = 'all'; // 'all' | 'uncat' — month transaction-table filter
+let txnFilterPeriod = null; // period the filter applies to (reset when you change month)
+// A row "needs a category" only while it's still auto-Miscellaneous and untouched.
+// Picking any category yourself — even Miscellaneous on purpose — sets user_category
+// and counts as reviewed, so the flag clears.
+const isUncategorized = (t) => !t.user_category && (t.category || 'Miscellaneous') === 'Miscellaneous';
 let active = 'overview'; // 'overview', a year 'YYYY', or a month 'YYYY-MM' (drilled in)
 let activeYear = String(new Date().getFullYear()); // the one open year tab
 let archivedYears = []; // closed-out years, viewed read-only via the Archive dropdown
@@ -74,15 +80,31 @@ async function importCsv(text, name) {
     if (r.latestMonth) active = r.latestMonth;
     await refresh();
     if (r.added) {
+      const review = r.uncategorized
+        ? `<a href="#" class="banner-link" id="banner-review">${r.uncategorized.toLocaleString()} to categorize →</a>`
+        : null;
       const parts = [`Added ${r.added.toLocaleString()} transaction${r.added === 1 ? '' : 's'}`];
       if (r.duplicates) parts.push(`${r.duplicates.toLocaleString()} duplicate${r.duplicates === 1 ? '' : 's'} skipped`);
-      if (r.uncategorized) parts.push(`${r.uncategorized.toLocaleString()} uncategorized`);
+      if (review) parts.push(review);
       if (r.skipped) parts.push(`${r.skipped.toLocaleString()} row${r.skipped === 1 ? '' : 's'} skipped`);
       showBanner(
         parts.join(' · ') + (r.latestMonth ? ` — showing ${monthLabel(r.latestMonth)}.` : '.'),
         r.uncategorized ? 'warn' : 'info'
       );
-      setTimeout(() => ($('banner').hidden = true), 6000);
+      // If some rows need a category, let the banner jump straight to a filtered
+      // list of just those; otherwise auto-dismiss after a few seconds.
+      const rev = $('banner-review');
+      if (rev) {
+        rev.onclick = (e) => {
+          e.preventDefault();
+          if (r.latestMonth) active = r.latestMonth;
+          txnFilter = 'uncat';
+          txnFilterPeriod = active; // keep the filter through the refresh
+          refresh();
+        };
+      } else {
+        setTimeout(() => ($('banner').hidden = true), 6000);
+      }
     } else if (r.duplicates) {
       showBanner(
         `No new transactions — all ${r.duplicates.toLocaleString()} row${r.duplicates === 1 ? ' was' : 's were'} already imported.`,
@@ -100,6 +122,71 @@ async function importCsv(text, name) {
     showBanner('Import failed: ' + e.message, 'error');
   }
 }
+
+// Step 1 of import: parse on the server (no save) and show a preview so the user
+// can confirm the CSV was read correctly before anything is written.
+let pendingImport = null; // { text, name } held between preview and confirm
+async function previewCsv(text, name) {
+  showBanner(`Reading ${esc(name)}…`);
+  try {
+    const r = await api('/api/import_preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/csv' },
+      body: text,
+    });
+    $('banner').hidden = true;
+    pendingImport = { text, name };
+    renderImportPreview(r, name);
+  } catch (e) {
+    showBanner('Could not read CSV: ' + e.message, 'error');
+  }
+}
+
+function renderImportPreview(r, name) {
+  const d = r.detected;
+  const chip = (label, val) => (val ? `<span class="chip"><b>${esc(label)}</b>${esc(val)}</span>` : '');
+  $('import-detected').innerHTML =
+    chip('Date', d.date) + chip('Description', d.description) + chip('Amount', d.amount) +
+    chip('Balance', d.balance) + chip('Account', d.account);
+
+  const bits = [`<b>${r.newCount.toLocaleString()}</b> new transaction${r.newCount === 1 ? '' : 's'}`];
+  if (r.duplicateCount) bits.push(`${r.duplicateCount.toLocaleString()} already imported`);
+  if (r.skipped) bits.push(`${r.skipped.toLocaleString()} row${r.skipped === 1 ? '' : 's'} skipped`);
+  $('import-stats').innerHTML = `From <b>${esc(name)}</b> — ` + bits.join(' · ') + '.';
+
+  $('import-sample-body').innerHTML = r.samples
+    .map(
+      (s) =>
+        `<tr><td>${esc(s.date)}</td><td title="${esc(s.desc)}">${esc(s.desc)}</td>` +
+        `<td class="num ${s.amount < 0 ? 'amt-out' : 'amt-in'}">${money(s.amount)}</td>` +
+        `<td>${esc(s.category)}</td></tr>`
+    )
+    .join('');
+
+  $('import-hint').textContent = r.newCount
+    ? 'Check the dates, amounts (red = money out, green = money in), and categories look right.'
+    : 'Nothing new here — every row is already in your data.';
+  $('import-confirm').textContent = r.newCount
+    ? `Import ${r.newCount.toLocaleString()} transaction${r.newCount === 1 ? '' : 's'}`
+    : 'Import anyway';
+  $('import-modal').hidden = false;
+}
+
+function closeImportModal() {
+  $('import-modal').hidden = true;
+  pendingImport = null;
+}
+
+$('import-cancel').addEventListener('click', closeImportModal);
+$('import-modal').addEventListener('click', (e) => { if (e.target === $('import-modal')) closeImportModal(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('import-modal').hidden) closeImportModal(); });
+$('import-confirm').addEventListener('click', () => {
+  if (!pendingImport) return;
+  const { text, name } = pendingImport;
+  $('import-modal').hidden = true;
+  pendingImport = null;
+  importCsv(text, name); // step 2: actually save
+});
 
 // --- Donut chart (animated SVG, hover-linked legend + live center) ----------
 // Shared core: draws the ring + animated center for any segment list. Returns
@@ -386,21 +473,27 @@ async function changeCategory(id, category) {
 
 function renderTransactions(tbodyId, pagerId, txns) {
   txnState[tbodyId] = { txns, page: 1, pagerId };
+  if (tbodyId === 'month-txn-body') renderTxnFilter(txns);
   drawTxnPage(tbodyId);
 }
 
 function drawTxnPage(tbodyId) {
   const st = txnState[tbodyId];
-  const total = st.txns.length;
+  // The "Needs category" filter only applies to the editable month table.
+  const list =
+    tbodyId === 'month-txn-body' && txnFilter === 'uncat' ? st.txns.filter(isUncategorized) : st.txns;
+  const total = list.length;
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   if (st.page > pages) st.page = pages;
 
   const start = (st.page - 1) * PAGE_SIZE;
-  const slice = st.txns.slice(start, start + PAGE_SIZE);
+  const slice = list.slice(start, start + PAGE_SIZE);
   const body = $(tbodyId);
   body.innerHTML = total
-    ? slice.map((t) => `<tr>${txnRowHtml(t)}</tr>`).join('')
-    : '<tr><td colspan="4" class="muted">No transactions.</td></tr>';
+    ? slice.map((t) => `<tr class="${isUncategorized(t) ? 'needs-cat' : ''}">${txnRowHtml(t)}</tr>`).join('')
+    : `<tr><td colspan="4" class="muted">${
+        txnFilter === 'uncat' ? 'Nothing left to categorize — all set. 🎉' : 'No transactions.'
+      }</td></tr>`;
   body.querySelectorAll('.cat-select').forEach((sel) =>
     sel.addEventListener('change', () => changeCategory(sel.dataset.txn, sel.value))
   );
@@ -419,6 +512,32 @@ function drawTxnPage(tbodyId) {
     b.addEventListener('click', () => {
       st.page += Number(b.dataset.dir);
       drawTxnPage(tbodyId);
+    })
+  );
+}
+
+// "All / Needs category" toggle above the month transaction table. Hidden when
+// there's nothing to triage (archived view, or no uncategorized rows on 'all').
+function renderTxnFilter(txns) {
+  const cont = $('txn-filter');
+  if (!cont) return;
+  const uncat = txns.filter(isUncategorized).length;
+  if (txnReadOnly || (uncat === 0 && txnFilter === 'all')) {
+    cont.hidden = true;
+    cont.innerHTML = '';
+    txnFilter = 'all';
+    return;
+  }
+  cont.hidden = false;
+  cont.innerHTML =
+    `<button class="txn-chip ${txnFilter === 'all' ? 'on' : ''}" data-f="all">All · ${txns.length}</button>` +
+    `<button class="txn-chip ${txnFilter === 'uncat' ? 'on' : ''}" data-f="uncat"${uncat === 0 ? ' disabled' : ''}>Needs category · ${uncat}</button>`;
+  cont.querySelectorAll('.txn-chip').forEach((b) =>
+    b.addEventListener('click', () => {
+      txnFilter = b.dataset.f;
+      txnState['month-txn-body'].page = 1;
+      renderTxnFilter(txns); // reflect the active state
+      drawTxnPage('month-txn-body');
     })
   );
 }
@@ -684,6 +803,9 @@ function renderPeriod(p) {
   if (isMonth) {
     $('month-txn-title').textContent = `Transactions — ${label}`;
     txnReadOnly = archived; // disables the per-row category dropdowns
+    // Reset the filter when the viewed month changes, but keep it across a
+    // recategorize-refresh so you can work down the "needs category" list.
+    if (p.period !== txnFilterPeriod) { txnFilter = 'all'; txnFilterPeriod = p.period; }
     renderTransactions('month-txn-body', 'month-pager', p.transactions);
     setupMonthForm(p.period);
     $('month-import-btn').hidden = archived;
@@ -905,7 +1027,7 @@ $('csv-input').addEventListener('change', async (e) => {
   if (!file) return;
   const text = await file.text();
   e.target.value = ''; // allow re-importing the same file
-  importCsv(text, file.name);
+  previewCsv(text, file.name);
 });
 
 syncThemeColors(); // match any saved theme before the first render

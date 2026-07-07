@@ -103,13 +103,23 @@ const num = (v) => {
 
 function parseDate(v) {
   const s = String(v || '').trim();
+  const p = (n) => String(n).padStart(2, '0');
   let m;
-  if ((m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/)))
-    return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`;
+  // Year-first, dash or slash: 2026-07-06 / 2026/07/06
+  if ((m = s.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})/)))
+    return `${m[1]}-${p(m[2])}-${p(m[3])}`;
+  // Month-first (US), dash or slash: 7/6/2026, 07-06-26
   if ((m = s.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})/))) {
     let [, mo, da, yr] = m;
     if (yr.length === 2) yr = '20' + yr;
-    return `${yr}-${mo.padStart(2, '0')}-${da.padStart(2, '0')}`;
+    return `${yr}-${p(mo)}-${p(da)}`;
+  }
+  // Textual months (e.g. "Jul 6, 2026", "6 January 2026") — only when letters are
+  // present, so we never re-interpret an ambiguous all-numeric date. Local
+  // components avoid a timezone day-shift.
+  if (/[a-z]/i.test(s)) {
+    const d = new Date(s);
+    if (!isNaN(d)) return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
   }
   return null;
 }
@@ -138,72 +148,129 @@ function computeTotals(txns) {
 }
 
 // --- API -------------------------------------------------------------------
+
+// Parse raw CSV text: auto-detect columns and build transaction records, WITHOUT
+// touching the DB. Shared by /api/import_preview (show + confirm) and /api/import
+// (save), so the preview reflects exactly what an import would store.
+// Returns { error } on a header/format problem, else { detected, records, skipped }.
+function analyzeCsv(text) {
+  const rows = parseCSV(text || '');
+  if (rows.length < 2) return { error: 'CSV has no data rows.' };
+
+  const rawHeader = rows[0].map((h) => h.trim());
+  const header = rawHeader.map((h) => h.toLowerCase());
+  const find = (...names) => header.findIndex((h) => names.some((n) => h.includes(n)));
+  const col = {
+    account: find('account'),
+    date: find('post date', 'date'),
+    // Prefer the unambiguous description headers; only fall back to weaker synonyms
+    // when none are present. (Chase's header is "Details,Posting Date,Description,…"
+    // where the Details column holds DEBIT/CREDIT — a plain first-match on 'details'
+    // would grab that instead of the real Description column and corrupt every row.)
+    desc: find('description', 'memo', 'payee'),
+    debit: find('debit', 'withdrawal', 'money out', 'paid out'),
+    credit: find('credit', 'deposit', 'money in', 'paid in'),
+    amount: find('amount'),
+    balance: find('balance'),
+    status: find('status'),
+  };
+  if (col.desc < 0) col.desc = find('merchant', 'details', 'narration', 'narrative');
+  if (col.date < 0 || col.desc < 0)
+    return { error: 'Could not find Date and Description columns in the CSV header.' };
+  if (col.debit < 0 && col.credit < 0 && col.amount < 0)
+    return { error: 'Could not find Debit/Credit or Amount columns.' };
+
+  const records = [];
+  let skipped = 0;
+  for (let r = 1; r < rows.length; r++) {
+    const row = rows[r];
+    if (!row.length || row.every((c) => !c || !c.trim())) continue; // blank line
+
+    const date = parseDate(row[col.date]);
+    if (!date) { skipped++; continue; }
+    const desc = (row[col.desc] || '').trim();
+    const account = col.account >= 0 ? (row[col.account] || '').trim() || 'account' : 'account';
+
+    let amount;
+    if (col.debit >= 0 || col.credit >= 0) {
+      const debit = col.debit >= 0 ? Math.abs(num(row[col.debit])) : 0;
+      const credit = col.credit >= 0 ? Math.abs(num(row[col.credit])) : 0;
+      amount = credit > 0 ? credit : -debit; // + = money in, - = money out
+    } else {
+      amount = num(row[col.amount]); // negative = outflow
+    }
+    if (amount === 0) { skipped++; continue; }
+
+    const balance = col.balance >= 0 ? num(row[col.balance]) : null;
+    const pending = col.status >= 0 && /pending/i.test(row[col.status] || '') ? 1 : 0;
+    const category = categorize(desc, amount > 0);
+    const id = createHash('sha1')
+      .update([account, date, desc, amount, balance].join('|'))
+      .digest('hex')
+      .slice(0, 16);
+
+    records.push({ id, account, date, desc, amount, category, balance, pending });
+  }
+
+  const detected = {
+    date: rawHeader[col.date],
+    description: rawHeader[col.desc],
+    amount: col.debit >= 0 || col.credit >= 0
+      ? [col.debit >= 0 ? rawHeader[col.debit] : null, col.credit >= 0 ? rawHeader[col.credit] : null]
+          .filter(Boolean).join(' / ')
+      : rawHeader[col.amount],
+    balance: col.balance >= 0 ? rawHeader[col.balance] : null,
+    account: col.account >= 0 ? rawHeader[col.account] : null,
+  };
+  return { detected, records, skipped };
+}
+
+// Preview an import: report the detected columns, a sample of parsed rows, and
+// how many are new vs. already-imported — WITHOUT saving. Lets the user confirm
+// the CSV parsed correctly (right dates/amounts/signs) before committing.
+app.post('/api/import_preview', express.text({ type: '*/*', limit: '15mb' }), (req, res) => {
+  try {
+    const a = analyzeCsv(req.body || '');
+    if (a.error) return res.status(400).json({ error: a.error });
+
+    const existing = new Set(stmt.allTxnIds.all().map((r) => r.transaction_id));
+    const seen = new Set();
+    let newCount = 0, duplicateCount = 0;
+    for (const rec of a.records) {
+      if (existing.has(rec.id) || seen.has(rec.id)) duplicateCount++;
+      else { newCount++; seen.add(rec.id); }
+    }
+    const samples = a.records.slice(0, 8).map((r) => ({
+      date: r.date, desc: r.desc, amount: r.amount, category: r.category,
+    }));
+    res.json({ ok: true, detected: a.detected, samples, newCount, duplicateCount, skipped: a.skipped });
+  } catch (err) {
+    console.error('Preview error:', err);
+    res.status(400).json({ error: 'Could not parse CSV: ' + err.message });
+  }
+});
+
 app.post('/api/import', express.text({ type: '*/*', limit: '15mb' }), (req, res) => {
   try {
-    const rows = parseCSV(req.body || '');
-    if (rows.length < 2) return res.status(400).json({ error: 'CSV has no data rows.' });
-
-    const header = rows[0].map((h) => h.trim().toLowerCase());
-    const find = (...names) => header.findIndex((h) => names.some((n) => h.includes(n)));
-    const col = {
-      account: find('account'),
-      date: find('post date', 'date'),
-      desc: find('description', 'memo', 'payee'),
-      debit: find('debit', 'withdrawal'),
-      credit: find('credit', 'deposit'),
-      amount: find('amount'),
-      balance: find('balance'),
-      status: find('status'),
-    };
-    if (col.date < 0 || col.desc < 0)
-      return res.status(400).json({ error: 'Could not find Date and Description columns in the CSV header.' });
-    if (col.debit < 0 && col.credit < 0 && col.amount < 0)
-      return res.status(400).json({ error: 'Could not find Debit/Credit or Amount columns.' });
+    const a = analyzeCsv(req.body || '');
+    if (a.error) return res.status(400).json({ error: a.error });
 
     const latestByAccount = {};
     // Ids already in the DB → tells new rows from re-imported duplicates.
     const existing = new Set(stmt.allTxnIds.all().map((r) => r.transaction_id));
     const addedIds = new Set();
-    let imported = 0, skipped = 0, added = 0, duplicates = 0, maxDate = null;
+    let added = 0, duplicates = 0, maxDate = null;
 
     inTransaction(() => {
-      for (let r = 1; r < rows.length; r++) {
-        const row = rows[r];
-        if (!row.length || row.every((c) => !c || !c.trim())) continue;
+      for (const rec of a.records) {
+        stmt.upsertTxn.run(rec.id, rec.account, rec.date, rec.desc, rec.amount, rec.category, rec.balance, rec.pending);
+        if (existing.has(rec.id)) duplicates++;
+        else { added++; existing.add(rec.id); addedIds.add(rec.id); }
+        if (!maxDate || rec.date > maxDate) maxDate = rec.date;
 
-        const date = parseDate(row[col.date]);
-        if (!date) { skipped++; continue; }
-        const desc = (row[col.desc] || '').trim();
-        const account = col.account >= 0 ? (row[col.account] || '').trim() || 'account' : 'account';
-
-        let amount;
-        if (col.debit >= 0 || col.credit >= 0) {
-          const debit = col.debit >= 0 ? Math.abs(num(row[col.debit])) : 0;
-          const credit = col.credit >= 0 ? Math.abs(num(row[col.credit])) : 0;
-          amount = credit > 0 ? credit : -debit; // + = money in, - = money out
-        } else {
-          amount = num(row[col.amount]); // negative = outflow
-        }
-        if (amount === 0) { skipped++; continue; }
-
-        const balance = col.balance >= 0 ? num(row[col.balance]) : null;
-        const pending = col.status >= 0 && /pending/i.test(row[col.status] || '') ? 1 : 0;
-        const category = categorize(desc, amount > 0);
-
-        const id = createHash('sha1')
-          .update([account, date, desc, amount, balance].join('|'))
-          .digest('hex')
-          .slice(0, 16);
-
-        stmt.upsertTxn.run(id, account, date, desc, amount, category, balance, pending);
-        imported++;
-        if (existing.has(id)) duplicates++;
-        else { added++; existing.add(id); addedIds.add(id); }
-        if (!maxDate || date > maxDate) maxDate = date;
-
-        if (balance != null) {
-          const prev = latestByAccount[account];
-          if (!prev || date >= prev.date) latestByAccount[account] = { date, balance };
+        if (rec.balance != null) {
+          const prev = latestByAccount[rec.account];
+          if (!prev || rec.date >= prev.date) latestByAccount[rec.account] = { date: rec.date, balance: rec.balance };
         }
       }
       for (const [account, info] of Object.entries(latestByAccount)) {
@@ -217,13 +284,13 @@ app.post('/api/import', express.text({ type: '*/*', limit: '15mb' }), (req, res)
     let uncategorized = 0;
     if (addedIds.size) {
       for (const t of stmt.allTxns.all()) {
-        if (addedIds.has(t.transaction_id) && (t.user_category || t.category) === 'Miscellaneous') uncategorized++;
+        if (addedIds.has(t.transaction_id) && !t.user_category && t.category === 'Miscellaneous') uncategorized++;
       }
     }
 
     res.json({
       ok: true,
-      imported, added, duplicates, uncategorized, skipped,
+      imported: added + duplicates, added, duplicates, uncategorized, skipped: a.skipped,
       latestMonth: maxDate ? maxDate.slice(0, 7) : null,
     });
   } catch (err) {

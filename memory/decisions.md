@@ -110,6 +110,32 @@ keep it global** (consistent cross-year merchant categorization is the point of 
 2026-06-26 merchant-learning entry). Read-only enforcement remains a UI-level guard on *editing* archived
 rows; automatic learned-rule propagation is intentionally not gated. Don't re-flag.
 
+## 2026-07-06 — Desktop distribution v2: Electron, and friends build locally (not sent a .dmg)
+To share with friends, wrapped the app in Electron (`electron/main.mjs` hosts `server.js` in-process on a free
+port; SQLite redirected to the OS user-data dir via `BUDGET_DATA_DIR` since a packaged bundle is read-only).
+**Chosen distribution = add each friend to the repo and have them `npm run dist:mac` locally**, rather than
+emailing a built `.dmg`. Rationale: a local build (a) auto-targets that Mac's chip (arm64 vs x64) and (b) is
+NOT quarantined by Gatekeeper (quarantine is set on *downloaded* files), so friends skip the "unidentified
+developer" wall entirely — no paid signing needed for a technical-enough friend group. `build/` holds the
+electron-builder icon resources and is COMMITTED (removed from `.gitignore`); packaged output goes to `dist/`.
+Verified a real packaged build's asar carries no `data`/`.env`/`.db` leak.
+
+## 2026-07-07 — Import is preview→confirm; parser is generic, not per-bank
+Owner will share with friends on *different banks*, so (a) parsing is generalized (broader header synonyms,
+ISO/US/textual dates) with no bank-specific special-casing, and (b) import is two-step: `POST /api/import_preview`
+(shared `analyzeCsv()`, no DB writes) drives a modal showing detected columns + sample rows + new/duplicate
+counts, and only on confirm does `POST /api/import` save. Rationale: with financial data a *silent* misparse
+(wrong column, flipped sign) is the real danger; the preview makes every first import self-checking, and is the
+generic safety net so we harden `analyzeCsv` reactively per real bank rather than guessing formats up front.
+
+## 2026-07-07 — "Uncategorized" means not-yet-reviewed, not "is Miscellaneous"
+The amber "needs category" marker + "Needs category · N" filter flag a row only when it's **untouched
+auto-Miscellaneous** (`!user_category && category==='Miscellaneous'`), on both the frontend predicate and the
+backend import count. Picking ANY category from the row dropdown — **including choosing Miscellaneous on
+purpose** — sets `user_category` and clears the flag. Owner chose this (over a subtler marker or removing it):
+the amber previously nagged every Miscellaneous row forever, including ones deliberately left as Misc. Flag =
+"you haven't looked at this yet," which is the actually-useful signal after an import.
+
 ## 2026-07-05 — clear_month recomputes surviving account balances
 Ultra-review finding: `clear_month` deleted a month's txns and dropped orphan accounts but never refreshed
 `accounts.current_balance`, so clearing the latest month could leave the balance KPI showing a value from the

@@ -152,6 +152,8 @@
             </div>
           </div>
 
+          <div class="txn-filter" id="txn-filter" hidden></div>
+
           <form id="add-txn-form" class="add-txn-form">
             <input type="date" id="txn-date" required />
             <input type="text" id="txn-desc" placeholder="Description" maxlength="120" required />
@@ -172,6 +174,27 @@
         </div>
       </section>
     </main>
+  </div>
+
+  <!-- Import preview: shown after picking a CSV, before anything is saved -->
+  <div id="import-modal" class="modal-overlay" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="import-modal-title">
+      <h2 id="import-modal-title">Review import</h2>
+      <p class="muted small">We read your file locally — here's how the columns were detected. Nothing is saved until you confirm.</p>
+      <div class="import-detected" id="import-detected"></div>
+      <div class="import-stats" id="import-stats"></div>
+      <div class="import-sample-wrap">
+        <table class="import-sample">
+          <thead><tr><th>Date</th><th>Description</th><th class="num">Amount</th><th>Category</th></tr></thead>
+          <tbody id="import-sample-body"></tbody>
+        </table>
+      </div>
+      <p class="muted small" id="import-hint"></p>
+      <div class="modal-actions">
+        <button id="import-cancel" class="secondary">Cancel</button>
+        <button id="import-confirm">Import</button>
+      </div>
+    </div>
   </div>
 
   <script src="app.js"></script>
