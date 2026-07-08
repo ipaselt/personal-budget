@@ -59,10 +59,14 @@ Redesign includes (verified via computed-display DOM eval + API curl on :4000):
   bank CSV. After building, the app is in `dist/` (NOT auto-installed to /Applications) — open the `.dmg` or run the
   `.app` in `dist/mac*`. Signing (~$99/yr) still optional/deferred. **Owner dislikes the current app icon**
   (`build/icon.svg`/`.png`) — redesign later.
-- **Multi-user on different banks:** the generic parser + import preview handle most banks; if a friend's import
-  looks wrong, get their header + one sample row and extend `analyzeCsv` synonyms/date formats (don't special-case
-  one bank). Owner is actively categorizing their own June data (watch Miscellaneous; merchant learning is global).
-- Refresh the OneDrive distribution zip from the merged real app if the owner wants the updated build on the Mac.
+- **Multi-user on different banks — mostly handled.** Import now reads **CSV, QFX/OFX, Excel (XLS/XLSX)** and
+  **credit-card statements** (flip toggle), all guarded by the preview. If a friend's import looks wrong, get one
+  real (fake-data) sample, parse via `/api/import_preview` (no writes), and extend `rowsToRecords`/`ofxToRecords`
+  reactively (don't special-case one bank). **PDF is the only unsupported format** — hard/fragile (per-bank layout,
+  pure-JS via `pdfjs-dist`); do it only if a friend's bank offers nothing else (most offer QFX/Excel somewhere).
+- Owner is actively categorizing their own data (watch Miscellaneous; merchant learning is global).
+  Pre-existing categorizer quirk noted, not fixed: substring rules can mis-bucket ("ETT*HOMEBODYRENTERINSU"→Housing
+  via RENT-in-RENTER instead of Insurance) — recategorize by hand, or tighten later.
 - **Deferred ultra-review items (not blockers):** dedup id folds in running balance → re-export double-count
   (design trade-off, not a quick fix); redundant full-table reads on `/api/overview` `/api/import` `/api/summary`
   (negligible at scale). Details in [CLAUDE.md](../CLAUDE.md) "Next up".

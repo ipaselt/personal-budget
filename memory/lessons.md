@@ -17,9 +17,23 @@
   `Cache-Control: no-store` on API routes for a read-after-write UI.
 - **`node:sqlite` needs Node ≥ 22.5** (experimental). Set in `engines`; surfaces as a `node:sqlite`
   import error on older Node. `--no-warnings` in the npm scripts hides the experimental warning.
-- **Keyword-rule ordering matters** (first match wins): specific before general. Watch substring
-  collisions — "via Mobile" matched the `MOBIL` gas keyword; "TRANSFER TO SAVINGS" needs Savings
-  checked before Transfer; "UBER EATS" needs Dining before Transportation.
+- **Keyword-rule ordering + substring collisions are fragile — reorder/broaden with a regression check.**
+  First match wins; specific before general ("TRANSFER TO SAVINGS" needs Savings before Transfer; "UBER
+  EATS" needs Dining before Transportation; "via Mobile" once matched the `MOBIL` gas keyword). This session:
+  a payment memo "…Funds Transfer… **interest: 0.00**" tripped the Income `INTEREST` keyword, and Chase's
+  header `Details` column (holds DEBIT/CREDIT) got grabbed by a `'details'` description synonym. **Reordering
+  or broadening a rule to fix one case regresses another** — moving Income after Transfer fixed the memo but
+  made credit-union "DIVIDEND FROM SHARE"→Transfer / "SAVINGS INTEREST"→Savings (independent review caught
+  it). Prefer a **scoped override** (e.g. flip-mode-only: card inflow reading as Income/Debt-Payment → Transfer)
+  over a global reorder; description-detection prefers unambiguous headers (description/memo/payee) before weak
+  fallbacks (merchant/details).
+- **Tune import parsers against a REAL sample — never guess the convention.** Every new format/source this
+  session had a quirk only a real file revealed: Chase's `Details` column ≠ description; QFX uses `FITID`
+  (better dedup) + `<STMTTRN>`; legacy `.xls` is OLE binary (needs SheetJS); **credit cards invert signs**
+  (Ardent card: purchases in the Credit column, payments in Debit with an "interest: 0.00" memo). Ask for one
+  real (fake-data) sample, parse it via `POST /api/import_preview` (no writes — sends raw bytes), and eyeball
+  signs/categories before building. Detect credit cards heuristically (OFX `<CREDITCARDMSGSRSV1>`, or many
+  inflows landing in spending categories) and let the user confirm the flip in the preview.
 - **Packaging a Node app for Mac:** deps here are pure-JS (no `.node` binaries) so bundle `node_modules`
   for unzip-and-run. **PowerShell 5.1 `Compress-Archive` writes backslash paths that break on macOS** —
   build the zip via `System.IO.Compression.ZipArchive` with forward-slash entry names instead (`zip`
