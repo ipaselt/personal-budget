@@ -66,6 +66,11 @@ const RULES = [
 export function categorize(description, isInflow) {
   const d = (description || '').toUpperCase();
   for (const [bucket, keys] of RULES) {
+    // An outflow is never income: a keyword like INTEREST/DIVIDEND on money going
+    // OUT is a fee, not income (e.g. a credit card's "INTEREST CHARGE ON PURCHASES").
+    // Skipping the Income bucket here lets it fall through to a real spend category
+    // instead of being mislabeled Income — which computeTotals would drop entirely.
+    if (bucket === 'Income' && !isInflow) continue;
     for (const k of keys) if (d.includes(k)) return bucket;
   }
   return isInflow ? 'Income' : 'Miscellaneous';
