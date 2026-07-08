@@ -155,6 +155,24 @@ classifier blocks an agent installing it unprompted). Trade-off accepted: a **UR
 (needs CDN reachable at `npm install` time) in exchange for a clean `npm audit`. Real risk was low (files come from
 the user's own bank, local app), but good hygiene for shared money software.
 
+## 2026-07-07 — Credit-card statements: a user-verified "flip signs" toggle, not auto-magic
+Credit cards invert the bank sign convention (a purchase reads as money-in) and their balance is debt owed —
+and the exact convention varies by issuer, so there's no universal auto-rule. Chose a **preview "flip signs"
+toggle** (`analyzeImport(…, {flip})`: negate amount, re-categorize on the flipped sign, drop the liability
+balance) over silent auto-flipping — the user eyeballs the sample and confirms. It's **auto-suggested**
+(`suggestFlip`) when the file smells like a card (OFX `<CREDITCARDMSGSRSV1>`/`<CCACCTFROM>`, or ≥3 inflows landing
+in spending categories and >40% of rows) and pre-applied on first open, but always overridable. Card **payments →
+Transfer** (excluded from totals) is done **in flip mode only**: an inflow (post-flip) that categorizes as `Income`
+or `Debt Payments` is forced to `Transfer` (a card has no income — inflows are payments/credits), robust across
+issuer wordings ("PAYMENT THANK YOU", bare "PAYMENT", "Funds Transfer… interest: 0.00"); a **refund keeps its
+merchant category** so it still reduces spend. *First attempt reordered `RULES` (Savings/Transfer before Income) to
+stop the "interest: 0.00" memo hitting the Income `INTEREST` keyword — the independent review caught that this
+regressed credit-union dividend/interest income ("DIVIDEND FROM SHARE"→Transfer, "SAVINGS INTEREST"→Savings), so it
+was reverted for the flip-scoped override.* Flipped ids are namespaced (`flip|<id>`) so a flipped import can't
+collide with the same file un-flipped (consistent across CSV/Excel/OFX). Verified on the owner's real Ardent card
+CSV: flipped → spending=$213.49, income=0, balance=0, idempotent re-import; bank CSV/QFX unaffected. Tuned against a
+real sample (fake data) rather than guessing the issuer convention.
+
 ## 2026-07-05 — clear_month recomputes surviving account balances
 Ultra-review finding: `clear_month` deleted a month's txns and dropped orphan accounts but never refreshed
 `accounts.current_balance`, so clearing the latest month could leave the balance KPI showing a value from the

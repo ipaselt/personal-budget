@@ -436,6 +436,17 @@ tfoot .total-row td { font-weight: 700; border-top: 1px solid var(--border); bor
 .import-sample .amt-out { color: var(--red); }
 .import-sample .amt-in { color: var(--green); }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px; }
+.flip-toggle {
+  display: flex; align-items: center; gap: 9px;
+  margin: 0 0 14px; padding: 8px 11px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  font-size: 0.82rem; color: var(--muted); cursor: pointer; user-select: none;
+}
+.flip-toggle input { accent-color: var(--accent); width: 15px; height: 15px; cursor: pointer; flex: none; }
+.flip-toggle b { color: var(--text); font-weight: 600; }
+.flip-toggle.suggested { border-color: var(--amber); color: var(--amber); background: rgba(240, 180, 41, 0.06); }
+.flip-toggle.suggested b { color: var(--amber); }
 
 /* ---- Uncategorized triage: filter chips + row marker + banner link ---- */
 .txn-filter { display: flex; gap: 8px; margin: 0 0 14px; }

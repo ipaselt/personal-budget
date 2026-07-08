@@ -68,10 +68,10 @@ function showBanner(html, kind = 'info') {
 }
 
 // --- Import (CSV / Excel / QFX) --------------------------------------------
-async function commitImport(buf, name) {
+async function commitImport(buf, name, flip) {
   showBanner(`Importing ${esc(name)}…`);
   try {
-    const r = await api('/api/import?name=' + encodeURIComponent(name), {
+    const r = await api(`/api/import?name=${encodeURIComponent(name)}&flip=${flip ? 1 : 0}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/octet-stream' },
       body: buf,
@@ -126,17 +126,21 @@ async function commitImport(buf, name) {
 // Step 1 of import: parse on the server (no save) and show a preview so the user
 // can confirm the file was read correctly before anything is written. Sends the
 // raw bytes so binary formats (Excel) work; the server sniffs CSV/Excel/QFX.
-let pendingImport = null; // { buf, name } held between preview and confirm
-async function previewImport(buf, name) {
+let pendingImport = null; // { buf, name, flip } held between preview and confirm
+// flip: null = initial pick (auto-apply the server's card suggestion once); true/false = explicit.
+async function previewImport(buf, name, flip = null) {
   showBanner(`Reading ${esc(name)}…`);
   try {
-    const r = await api('/api/import_preview?name=' + encodeURIComponent(name), {
+    const useFlip = flip === true;
+    const r = await api(`/api/import_preview?name=${encodeURIComponent(name)}&flip=${useFlip ? 1 : 0}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/octet-stream' },
       body: buf,
     });
+    // On the first look, if the file smells like a credit card, auto-apply the flip once.
+    if (flip === null && r.suggestFlip && !r.flip) return previewImport(buf, name, true);
     $('banner').hidden = true;
-    pendingImport = { buf, name };
+    pendingImport = { buf, name, flip: useFlip };
     renderImportPreview(r, name);
   } catch (e) {
     showBanner('Could not read file: ' + e.message, 'error');
@@ -165,9 +169,15 @@ function renderImportPreview(r, name) {
     )
     .join('');
 
-  $('import-hint').textContent = r.newCount
-    ? 'Check the dates, amounts (red = money out, green = money in), and categories look right.'
-    : 'Nothing new here — every row is already in your data.';
+  // Credit-card flip toggle: reflect server state + highlight when auto-suggested.
+  $('flip-check').checked = !!r.flip;
+  $('flip-toggle').classList.toggle('suggested', !!r.suggestFlip);
+
+  $('import-hint').textContent = !r.newCount
+    ? 'Nothing new here — every row is already in your data.'
+    : r.flip
+      ? 'Credit-card mode: purchases now count as spending, payments as transfers. Uncheck if the amounts look wrong.'
+      : 'Check the dates, amounts (red = money out, green = money in), and categories look right.';
   $('import-confirm').textContent = r.newCount
     ? `Import ${r.newCount.toLocaleString()} transaction${r.newCount === 1 ? '' : 's'}`
     : 'Import anyway';
@@ -182,12 +192,16 @@ function closeImportModal() {
 $('import-cancel').addEventListener('click', closeImportModal);
 $('import-modal').addEventListener('click', (e) => { if (e.target === $('import-modal')) closeImportModal(); });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('import-modal').hidden) closeImportModal(); });
+// Toggling credit-card mode re-parses the same file with the flip applied.
+$('flip-check').addEventListener('change', (e) => {
+  if (pendingImport) previewImport(pendingImport.buf, pendingImport.name, e.target.checked);
+});
 $('import-confirm').addEventListener('click', () => {
   if (!pendingImport) return;
-  const { buf, name } = pendingImport;
+  const { buf, name, flip } = pendingImport;
   $('import-modal').hidden = true;
   pendingImport = null;
-  commitImport(buf, name); // step 2: actually save
+  commitImport(buf, name, flip); // step 2: actually save
 });
 
 // --- Donut chart (animated SVG, hover-linked legend + live center) ----------

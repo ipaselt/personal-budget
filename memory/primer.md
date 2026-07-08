@@ -13,10 +13,12 @@ preview→confirm modal before saving, bank-agnostic column/date detection, and 
 "Needs category · N" filter (flag = not-yet-reviewed; picking any category, incl. Miscellaneous, clears it).
 **Multi-format import added 2026-07-07**: also reads **QFX/OFX** and **Excel (XLS/XLSX)**, not just CSV —
 `analyzeImport()` sniffs bytes and dispatches (Excel via SheetJS `xlsx@0.20.3` patched CDN build; OFX dedups on FITID).
+**Credit-card statements added 2026-07-07**: a preview "flip signs" toggle (auto-suggested) handles cards' inverted
+signs — purchases→spending, payments→Transfer, liability balance dropped.
 
 **Git:** **`master`, pushed to private GitHub `ipaselt/personal-budget`.** Recent commits: Mission Control
 redesign (`9f3330e`) → Electron desktop wrapper (`2a07153`) → import preview + generic parser + triage (`a38486f`)
-→ multi-format QFX/Excel import (this commit). Each landed on master after an independent fresh-context subagent
+→ multi-format QFX/Excel import (`5467a13`) → credit-card flip support (this commit). Each landed on master after an independent fresh-context subagent
 review (light path); blockers fixed. Direct-to-master commits are allowed here (solo, non-orchestrated), gated by
 the pre-push review hook.
 

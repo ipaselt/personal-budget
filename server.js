@@ -269,13 +269,15 @@ function ofxToRecords(text) {
 }
 
 // Dispatch an uploaded import file to the right parser by sniffing its bytes
-// (filename is only a hint). Returns { error } or { format, detected, records, skipped }.
-function analyzeImport(buf, nameHint = '') {
+// (filename is only a hint), then optionally flip signs for credit-card statements.
+// Returns { error } or { format, detected, records, skipped, suggestFlip, flip }.
+function analyzeImport(buf, nameHint = '', { flip = false } = {}) {
   if (!Buffer.isBuffer(buf) || !buf.length) return { error: 'Empty file.' };
   const isZip = buf[0] === 0x50 && buf[1] === 0x4b;                        // "PK"  → xlsx (zip)
   const isOle = buf[0] === 0xd0 && buf[1] === 0xcf && buf[2] === 0x11;     // OLE  → legacy .xls
   const ext = (nameHint.match(/\.([a-z0-9]+)$/i) || [, ''])[1].toLowerCase();
 
+  let base, isOfxCard = false;
   if (isZip || isOle || ext === 'xls' || ext === 'xlsx') {
     let rows;
     try {
@@ -286,17 +288,50 @@ function analyzeImport(buf, nameHint = '') {
       return { error: 'Could not read the spreadsheet: ' + e.message };
     }
     const out = rowsToRecords(rows);
-    return out.error ? out : { format: 'Excel', ...out };
+    if (out.error) return out;
+    base = { format: 'Excel', ...out };
+  } else {
+    const text = buf.toString('utf8');
+    if (/^\s*OFXHEADER|<OFX>/i.test(text)) {
+      isOfxCard = /<CREDITCARDMSGSRSV1|<CCACCTFROM/i.test(text); // OFX marks credit-card accounts
+      const out = ofxToRecords(text);
+      if (out.error) return out;
+      base = { format: 'OFX/QFX', ...out };
+    } else {
+      const out = rowsToRecords(parseCSV(text));
+      if (out.error) return out;
+      base = { format: 'CSV', ...out };
+    }
   }
 
-  const text = buf.toString('utf8');
-  if (/^\s*OFXHEADER|<OFX>/i.test(text)) {
-    const out = ofxToRecords(text);
-    return out.error ? out : { format: 'OFX/QFX', ...out };
+  // Credit-card statements invert the bank sign convention (purchases look like money
+  // in). Suggest a flip when the file smells like a card: an OFX credit-card account, or
+  // several inflows that landed in spending categories (the tell-tale of mis-signed
+  // purchases). Computed on the natural parse; the user confirms via the preview.
+  const spendingInflow = base.records.filter(
+    (r) => r.amount > 0 && !['Income', 'Transfer', 'Savings/Investing'].includes(r.category)
+  ).length;
+  const suggestFlip = isOfxCard || (spendingInflow >= 3 && spendingInflow > base.records.length * 0.4);
+
+  if (flip) {
+    for (const rec of base.records) {
+      rec.amount = -rec.amount;
+      rec.balance = null; // a card balance is debt owed — keep it out of the asset KPI
+      rec.category = categorize(rec.desc, rec.amount > 0);
+      // A credit card has no income: an inflow (after flip) that reads as income or a
+      // debt-payment is really a payment/credit TO the card → Transfer (excluded from
+      // totals), robust across issuers ("PAYMENT THANK YOU", bare "PAYMENT", "Funds
+      // Transfer", etc.). A refund keeps its merchant category so it still reduces spend.
+      if (rec.amount > 0 && (rec.category === 'Income' || rec.category === 'Debt Payments')) {
+        rec.category = 'Transfer';
+      }
+      // Namespace the id so a flipped import can't collide with the same file imported
+      // un-flipped — deterministic (idempotent), consistent across CSV/Excel/OFX.
+      rec.id = createHash('sha1').update(`flip|${rec.id}`).digest('hex').slice(0, 16);
+    }
   }
 
-  const out = rowsToRecords(parseCSV(text));
-  return out.error ? out : { format: 'CSV', ...out };
+  return { ...base, suggestFlip, flip };
 }
 
 // Preview an import: report the detected columns, a sample of parsed rows, and
@@ -304,7 +339,7 @@ function analyzeImport(buf, nameHint = '') {
 // the CSV parsed correctly (right dates/amounts/signs) before committing.
 app.post('/api/import_preview', express.raw({ type: '*/*', limit: '25mb' }), (req, res) => {
   try {
-    const a = analyzeImport(req.body, req.query.name || '');
+    const a = analyzeImport(req.body, req.query.name || '', { flip: req.query.flip === '1' });
     if (a.error) return res.status(400).json({ error: a.error });
 
     const existing = new Set(stmt.allTxnIds.all().map((r) => r.transaction_id));
@@ -317,7 +352,7 @@ app.post('/api/import_preview', express.raw({ type: '*/*', limit: '25mb' }), (re
     const samples = a.records.slice(0, 8).map((r) => ({
       date: r.date, desc: r.desc, amount: r.amount, category: r.category,
     }));
-    res.json({ ok: true, format: a.format, detected: a.detected, samples, newCount, duplicateCount, skipped: a.skipped });
+    res.json({ ok: true, format: a.format, detected: a.detected, samples, newCount, duplicateCount, skipped: a.skipped, suggestFlip: a.suggestFlip, flip: a.flip });
   } catch (err) {
     console.error('Preview error:', err);
     res.status(400).json({ error: 'Could not read the file: ' + err.message });
@@ -326,7 +361,7 @@ app.post('/api/import_preview', express.raw({ type: '*/*', limit: '25mb' }), (re
 
 app.post('/api/import', express.raw({ type: '*/*', limit: '25mb' }), (req, res) => {
   try {
-    const a = analyzeImport(req.body, req.query.name || '');
+    const a = analyzeImport(req.body, req.query.name || '', { flip: req.query.flip === '1' });
     if (a.error) return res.status(400).json({ error: a.error });
 
     const latestByAccount = {};
