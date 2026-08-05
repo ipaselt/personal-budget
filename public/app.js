@@ -481,16 +481,19 @@ function txnRowHtml(t) {
     <td class="num ${isIn ? 'positive' : 'negative'}">${isIn ? '+' : '-'}${money(Math.abs(t.amount))}</td>`;
 }
 
-// Recategorizing asks whether to remember the merchant (apply to every matching row +
-// future imports) or change only this one transaction — so a one-off (e.g. a transfer
-// that shares a description with rows you want left alone) doesn't get learned globally.
+// Recategorizing to Transfer asks whether to apply to every matching row (+ future
+// imports) or just this one — so a self-transfer that shares a description with rows you
+// want left alone doesn't get learned globally. Every other category keeps the
+// merchant-learning default (apply to all) with no prompt.
 let pendingCat = null; // { sel, id, category }
 
 function promptCategoryScope(sel) {
   pendingCat = { sel, id: sel.dataset.txn, category: sel.value };
+  // Only Transfer opens the choice; anything else applies to all merchant rows silently.
+  if (sel.value !== 'Transfer') { applyCategoryScope('all'); return; }
   $('cat-modal-text').innerHTML =
-    `Set <b>${esc(sel.dataset.name)}</b> to <b>${esc(sel.value)}</b>.<br><br>` +
-    `<b>Apply to all</b> remembers this merchant and categorizes every matching transaction, now and on future imports. ` +
+    `Set <b>${esc(sel.dataset.name)}</b> to <b>Transfer</b>.<br><br>` +
+    `<b>Apply to all</b> sets every transaction with this description to Transfer, now and on future imports. ` +
     `<b>Just this one</b> changes only this transaction.`;
   $('cat-modal').hidden = false;
   $('cat-all').focus();
