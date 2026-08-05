@@ -625,15 +625,20 @@ app.post('/api/clear_month', (req, res) => {
 // remember UPPER(description) -> category and apply it to every matching row now
 // and on future imports, so a fix sticks for that merchant going forward.
 app.post('/api/transaction_category', (req, res) => {
-  const { transaction_id, user_category } = req.body;
+  const { transaction_id, user_category, scope } = req.body;
   if (!transaction_id) return res.status(400).json({ error: 'transaction_id required' });
   const row = stmt.getTxnName.get(transaction_id);
   const pattern = row ? String(row.name || '').toUpperCase() : null;
   inTransaction(() => {
-    if (user_category && pattern) {
+    // scope 'all' (default): remember the merchant and fix every matching row now +
+    // on future imports. scope 'one': set just this transaction, no learned rule — for a
+    // one-off (e.g. a transfer) that shares a description with rows you want left alone.
+    if (user_category && pattern && scope !== 'one') {
       stmt.upsertLearned.run(pattern, user_category); // remember the merchant
       stmt.setUserCatByPattern.run(user_category, pattern); // fix every matching row now
     } else {
+      // A per-row override; survives re-imports and isn't touched by learned rules
+      // (fillUserCatByPattern only fills rows whose user_category is still NULL).
       stmt.setUserCategory.run(user_category || null, transaction_id);
     }
   });

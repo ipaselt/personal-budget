@@ -204,6 +204,13 @@ $('import-confirm').addEventListener('click', () => {
   commitImport(buf, name, flip); // step 2: actually save
 });
 
+// Recategorize scope choice (see promptCategoryScope).
+$('cat-all').addEventListener('click', () => applyCategoryScope('all'));
+$('cat-one').addEventListener('click', () => applyCategoryScope('one'));
+$('cat-cancel').addEventListener('click', cancelCategoryScope);
+$('cat-modal').addEventListener('click', (e) => { if (e.target === $('cat-modal')) cancelCategoryScope(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('cat-modal').hidden) cancelCategoryScope(); });
+
 // --- Donut chart (animated SVG, hover-linked legend + live center) ----------
 // Shared core: draws the ring + animated center for any segment list. Returns
 // { highlight, reset } so each caller can wire its own legend hover. segments:
@@ -470,21 +477,47 @@ function txnRowHtml(t) {
   return `
     <td class="muted">${t.date}</td>
     <td>${esc(t.name)}${t.pending ? ' <span class="pending">pending</span>' : ''}</td>
-    <td><select class="cat-select" data-txn="${t.transaction_id}"${txnReadOnly ? ' disabled' : ''}>${opts}</select></td>
+    <td><select class="cat-select" data-txn="${t.transaction_id}" data-name="${esc(t.name)}" data-prev="${esc(t.effective_category)}"${txnReadOnly ? ' disabled' : ''}>${opts}</select></td>
     <td class="num ${isIn ? 'positive' : 'negative'}">${isIn ? '+' : '-'}${money(Math.abs(t.amount))}</td>`;
 }
 
-async function changeCategory(id, category) {
+// Recategorizing asks whether to remember the merchant (apply to every matching row +
+// future imports) or change only this one transaction — so a one-off (e.g. a transfer
+// that shares a description with rows you want left alone) doesn't get learned globally.
+let pendingCat = null; // { sel, id, category }
+
+function promptCategoryScope(sel) {
+  pendingCat = { sel, id: sel.dataset.txn, category: sel.value };
+  $('cat-modal-text').innerHTML =
+    `Set <b>${esc(sel.dataset.name)}</b> to <b>${esc(sel.value)}</b>.<br><br>` +
+    `<b>Apply to all</b> remembers this merchant and categorizes every matching transaction, now and on future imports. ` +
+    `<b>Just this one</b> changes only this transaction.`;
+  $('cat-modal').hidden = false;
+  $('cat-all').focus();
+}
+
+async function applyCategoryScope(scope) {
+  if (!pendingCat) return;
+  const { id, category } = pendingCat;
+  pendingCat = null;
+  $('cat-modal').hidden = true;
   try {
     await api('/api/transaction_category', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ transaction_id: id, user_category: category }),
+      body: JSON.stringify({ transaction_id: id, user_category: category, scope }),
     });
     await refresh();
   } catch (e) {
     showBanner('Could not recategorize: ' + e.message, 'error');
   }
+}
+
+// Closing without choosing reverts the dropdown to its saved value (nothing was written).
+function cancelCategoryScope() {
+  if (pendingCat) pendingCat.sel.value = pendingCat.sel.dataset.prev;
+  pendingCat = null;
+  $('cat-modal').hidden = true;
 }
 
 function renderTransactions(tbodyId, pagerId, txns) {
@@ -511,7 +544,7 @@ function drawTxnPage(tbodyId) {
         txnFilter === 'uncat' ? 'Nothing left to categorize — all set. 🎉' : 'No transactions.'
       }</td></tr>`;
   body.querySelectorAll('.cat-select').forEach((sel) =>
-    sel.addEventListener('change', () => changeCategory(sel.dataset.txn, sel.value))
+    sel.addEventListener('change', () => promptCategoryScope(sel))
   );
 
   const pager = $(st.pagerId);
@@ -612,17 +645,11 @@ function renderOverview(o) {
   // instead of a wall of $0 KPIs and blank charts.
   const empty = !o.months || o.months.length === 0;
   $('overview-empty').hidden = !empty;
-  $('kpi-strip').hidden = empty;
   $('overview-grid').hidden = empty;
   $('recent-panel').hidden = empty;
   if (empty) { $('overview-insight').hidden = true; return; }
 
-  $('balance-value').textContent = money(o.balance);
-  $('balance-sub').textContent = o.accountCount
-    ? `across ${o.accountCount} account${o.accountCount === 1 ? '' : 's'}` + (o.latest ? ` · as of ${o.latest}` : '')
-    : 'no accounts imported yet';
-  // The Overview leads with the active year (matching the KPI strip + YoY below).
-  // cur = this year's totals, prev = last year's — summed from the monthly series.
+  // cur = the active year's totals (summed from the monthly series) — used by the insight line.
   const yearSum = (yr) =>
     o.monthly.reduce(
       (r, m) => {
@@ -631,10 +658,7 @@ function renderOverview(o) {
       },
       { income: 0, spending: 0, savings: 0, leftover: 0 }
     );
-  const prevYear = String(Number(o.activeYear) - 1);
   const cur = yearSum(o.activeYear);
-  const prev = yearSum(prevYear);
-  const hasPrev = prev.income || prev.spending || prev.savings || prev.leftover;
 
   // Donut defaults to the cumulative all-years total (it grows as you add years);
   // clicking a month in the grid scopes to it, clicking again returns to cumulative.
@@ -651,28 +675,7 @@ function renderOverview(o) {
   // Click a month to scope the donut to it (toggle off by clicking again).
   renderMonthGrid('overview-bars', o.monthly, o.activeYear, showDonut, false, true);
 
-  // --- KPI strip: active-year totals with year-over-year deltas vs last year ---
-  const yoy = (id, curV, prevV, goodUp) => {
-    const el = $(id);
-    if (!hasPrev || !prevV) { el.textContent = `vs ${prevYear}`; el.className = 'kpi-delta'; return; }
-    const d = Math.round(((curV - prevV) / Math.abs(prevV)) * 100);
-    const up = d >= 0;
-    const good = d === 0 ? null : up === goodUp;
-    el.textContent = `${up ? '▲' : '▼'} ${Math.abs(d)}% vs ${prevYear}`;
-    el.className = 'kpi-delta' + (good === null ? '' : good ? ' up' : ' down');
-  };
-  $('kpi-income').textContent = money(cur.income);
-  yoy('kpi-income-d', cur.income, prev.income, true);
-  $('kpi-spending').textContent = money(cur.spending);
-  yoy('kpi-spending-d', cur.spending, prev.spending, false);
-  $('kpi-savings').textContent = money(cur.savings);
-  yoy('kpi-savings-d', cur.savings, prev.savings, true);
-  $('kpi-leftover').textContent = money(cur.leftover);
-  yoy('kpi-leftover-d', cur.leftover, prev.leftover, true);
   const saved = cur.income ? Math.round(((cur.income - cur.spending) / cur.income) * 100) : 0;
-  $('kpi-saved').textContent = `${saved}%`;
-  $('kpi-saved-d').textContent = `kept in ${o.activeYear}`;
-  $('kpi-saved-d').className = 'kpi-delta up';
 
   // --- Plain-English insight line ---
   const insight = $('overview-insight');

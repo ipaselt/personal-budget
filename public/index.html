@@ -45,18 +45,6 @@
           <button id="empty-import-btn">Import bank file</button>
         </div>
         <div class="insight-bar" id="overview-insight" hidden></div>
-        <div class="kpis" id="kpi-strip">
-          <div class="kpi balance">
-            <div class="kpi-k">Balance</div>
-            <div class="kpi-val" id="balance-value">$0</div>
-            <div class="kpi-delta" id="balance-sub"></div>
-          </div>
-          <div class="kpi"><div class="kpi-k">Income</div><div class="kpi-val" id="kpi-income">—</div><div class="kpi-delta" id="kpi-income-d"></div></div>
-          <div class="kpi"><div class="kpi-k">Spending</div><div class="kpi-val" id="kpi-spending">—</div><div class="kpi-delta" id="kpi-spending-d"></div></div>
-          <div class="kpi"><div class="kpi-k">Savings</div><div class="kpi-val" id="kpi-savings">—</div><div class="kpi-delta" id="kpi-savings-d"></div></div>
-          <div class="kpi"><div class="kpi-k">Leftover</div><div class="kpi-val" id="kpi-leftover">—</div><div class="kpi-delta" id="kpi-leftover-d"></div></div>
-          <div class="kpi"><div class="kpi-k">Saved</div><div class="kpi-val" id="kpi-saved">—</div><div class="kpi-delta" id="kpi-saved-d">of income</div></div>
-        </div>
 
         <div class="grid" id="overview-grid">
           <div class="panel">
@@ -197,6 +185,18 @@
       <div class="modal-actions">
         <button id="import-cancel" class="secondary">Cancel</button>
         <button id="import-confirm">Import</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="cat-modal" class="modal-overlay" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="cat-modal-title">
+      <h2 id="cat-modal-title">Apply category</h2>
+      <p class="muted small" id="cat-modal-text"></p>
+      <div class="modal-actions">
+        <button id="cat-cancel" class="secondary">Cancel</button>
+        <button id="cat-one" class="secondary">Just this one</button>
+        <button id="cat-all">Apply to all</button>
       </div>
     </div>
   </div>
