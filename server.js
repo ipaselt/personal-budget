@@ -51,7 +51,8 @@ const RULES = [
   ['Income', ['PAYROLL', 'DIRECT DEP', 'DIRECT DEPOSIT', 'SALARY', 'PAYCHECK', 'GUSTO', 'INTEREST', 'DIVIDEND', 'TAX REF', 'IRS TREAS', 'SSA', 'PENSION']],
   // Savings before Transfer so "TRANSFER TO SAVINGS" lands in Savings, not the generic Transfer bucket.
   ['Savings/Investing', ['SAVINGS', 'TO S0001', 'S0001', 'VANGUARD', 'FIDELITY', 'SCHWAB', 'ROBINHOOD', 'ACORNS', 'WEALTHFRONT', 'BETTERMENT', '401K', 'ROTH', ' IRA', 'BROKERAGE', 'COINBASE', 'INVEST']],
-  ['Transfer', ['TRANSFER TO', 'TRANSFER FROM', 'XFER', 'ATM', 'CASH WITHDRAWAL', 'ONLINE BANKING', 'TO SHARE', 'FROM SHARE', 'OVERDRAFT', 'INTERNAL']],
+  // 'VENMO CASHOUT' = pulling your own Venmo balance into your bank — a transfer, not income.
+  ['Transfer', ['TRANSFER TO', 'TRANSFER FROM', 'XFER', 'ATM', 'CASH WITHDRAWAL', 'ONLINE BANKING', 'TO SHARE', 'FROM SHARE', 'OVERDRAFT', 'INTERNAL', 'VENMO CASHOUT']],
   // Credit-card payoffs — excluded from spending (the card's purchases already counted).
   // Kept ahead of Debt Payments so card keywords land here, not in a spending bucket.
   // Payment-intent tokens only — NOT bare issuer names like "CAPITAL ONE", which also
@@ -561,6 +562,17 @@ app.get('/api/overview', (req, res) => {
     category: displayCategory(x),
   }));
 
+  // Per-month, per-category spend so the Overview budget panel can scope to a clicked
+  // month (like the donut) without a round-trip. Keyed 'YYYY-MM' -> { category: spent }.
+  const bucketsList = expenseBuckets();
+  const byMonthTxns = {};
+  for (const x of allTxns) (byMonthTxns[x.date.slice(0, 7)] ||= []).push(x);
+  const monthlyByCategory = {};
+  for (const [mo, txns] of Object.entries(byMonthTxns)) {
+    const tt = computeTotals(txns);
+    monthlyByCategory[mo] = Object.fromEntries(bucketsList.map((b) => [b, round2(tt.spentByBucket[b] || 0)]));
+  }
+
   res.json({
     income: round2(t.income),
     spending: round2(t.spending),
@@ -573,6 +585,7 @@ app.get('/api/overview', (req, res) => {
     monthly: monthlySeries(),
     activeYear,
     budgetMonth,
+    monthlyByCategory,
     archivedYears: stmt.listArchivedYears.all().map((r) => r.year),
     recent,
     categories: expenseBuckets().map((b) => ({

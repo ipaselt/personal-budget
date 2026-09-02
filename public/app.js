@@ -664,8 +664,8 @@ function renderOverview(o) {
     );
   const cur = yearSum(o.activeYear);
 
-  // Donut defaults to the cumulative all-years total (it grows as you add years);
-  // clicking a month in the grid scopes to it, clicking again returns to cumulative.
+  // Donut + budget panel both scope to a clicked month (and revert when you click it
+  // again) — the month grid drives both through onMonthSelect below.
   const showDonut = (monthKey) => {
     const m = monthKey && o.monthly.find((x) => x.month === monthKey);
     $('overview-chart-title').textContent = m
@@ -673,59 +673,74 @@ function renderOverview(o) {
       : 'Where your income has gone — all years (cumulative)';
     renderDonut('overview-chart', 'overview-legend', m || o);
   };
-  showDonut(null);
-
-  $('overview-bars-title').textContent = `By month — ${o.activeYear}`;
-  // Click a month to scope the donut to it (toggle off by clicking again).
-  renderMonthGrid('overview-bars', o.monthly, o.activeYear, showDonut, false, true);
 
   const saved = cur.income ? Math.round(((cur.income - cur.spending) / cur.income) * 100) : 0;
-
-  // --- Plain-English insight line ---
   const insight = $('overview-insight');
   insight.hidden = !(cur.income || cur.spending);
-  if (!insight.hidden) {
-    const bLabel = o.budgetMonth ? monthLabel(o.budgetMonth) : 'this month';
-    const over = o.categories
-      .filter((c) => c.limit != null && c.limit > 0 && c.spent > c.limit)
-      .sort((a, b) => b.spent - b.limit - (a.spent - a.limit));
-    const anyBudget = o.categories.some((c) => c.limit != null && c.limit > 0);
-    let budgetMsg;
-    if (!anyBudget) budgetMsg = `no budgets are set yet.`;
-    else if (over.length === 0) budgetMsg = `every budget is on track for ${bLabel}.`;
-    else if (over.length === 1)
-      budgetMsg = `<span class="ins-warn">${over[0].category}</span> is over its ${bLabel} budget (${money(over[0].spent)} of ${money(over[0].limit)}).`;
-    else
-      budgetMsg = `<span class="ins-warn">${over.length} budgets</span> are over for ${bLabel}: ${over.slice(0, 3).map((c) => c.category).join(', ')}.`;
-    insight.innerHTML = `<span class="ins-dot"></span><span>You've kept <span class="ins-good">${saved}%</span> of your income — ${budgetMsg}</span>`;
-  }
+  const SAVINGS = 'Savings/Investing';
 
-  // --- Budget-progress rows (this month's spend vs the monthly budget) ---
-  $('overview-budget-title').textContent = `Budgets · ${o.budgetMonth ? monthLabel(o.budgetMonth) : 'this month'}`;
-  $('overview-budget-body').innerHTML = o.categories
-    .map((row) => {
-      const hasLimit = row.limit != null && row.limit > 0;
-      const ratio = hasLimit ? row.spent / row.limit : 0;
-      const over = hasLimit && row.spent > row.limit;
-      const w = hasLimit ? Math.min(100, Math.round(ratio * 100)) : 0;
-      const cls = over ? 'over' : ratio >= 1 ? 'full' : '';
-      const val = hasLimit
-        ? `<span class="bp-val ${over ? 'over' : ''}">${money(row.spent)} / ${money(row.limit)}</span>`
-        : `<span class="bp-val none">${row.spent > 0 ? money(row.spent) + ' spent' : 'no budget'}</span>`;
-      return `
+  // Render the budget panel (and the insight's budget line) for a month — or the default
+  // budget month when monthKey is null. Per-category spend comes from o.monthlyByCategory
+  // so scoping to a clicked month is instant, mirroring the donut.
+  function renderBudgets(monthKey) {
+    const month = monthKey || o.budgetMonth;
+    const label = month ? monthLabel(month) : 'this month';
+    const spend = (o.monthlyByCategory && o.monthlyByCategory[month]) || {};
+    const spentOf = (c) => spend[c] || 0;
+
+    if (!insight.hidden) {
+      // Over-saving is a good thing, so it never counts as an "over budget" warning.
+      const over = o.categories
+        .filter((c) => c.category !== SAVINGS && c.limit != null && c.limit > 0 && spentOf(c.category) > c.limit)
+        .sort((a, b) => (spentOf(b.category) - b.limit) - (spentOf(a.category) - a.limit));
+      const anyBudget = o.categories.some((c) => c.limit != null && c.limit > 0);
+      let budgetMsg;
+      if (!anyBudget) budgetMsg = `no budgets are set yet.`;
+      else if (over.length === 0) budgetMsg = `every budget is on track for ${label}.`;
+      else if (over.length === 1)
+        budgetMsg = `<span class="ins-warn">${over[0].category}</span> is over its ${label} budget (${money(spentOf(over[0].category))} of ${money(over[0].limit)}).`;
+      else
+        budgetMsg = `<span class="ins-warn">${over.length} budgets</span> are over for ${label}: ${over.slice(0, 3).map((c) => c.category).join(', ')}.`;
+      insight.innerHTML = `<span class="ins-dot"></span><span>You've kept <span class="ins-good">${saved}%</span> of your income — ${budgetMsg}</span>`;
+    }
+
+    $('overview-budget-title').textContent = `Budgets · ${label}`;
+    $('overview-budget-body').innerHTML = o.categories
+      .map((row) => {
+        const spent = spentOf(row.category);
+        const hasLimit = row.limit != null && row.limit > 0;
+        const ratio = hasLimit ? spent / row.limit : 0;
+        const over = hasLimit && spent > row.limit;
+        const goodOver = over && row.category === SAVINGS; // saving past your target is good, not bad
+        const w = hasLimit ? Math.min(100, Math.round(ratio * 100)) : 0;
+        const cls = over ? (goodOver ? 'full' : 'over') : ratio >= 1 ? 'full' : '';
+        const valCls = goodOver ? 'good' : over ? 'over' : '';
+        const val = hasLimit
+          ? `<span class="bp-val ${valCls}">${money(spent)} / ${money(row.limit)}</span>`
+          : `<span class="bp-val none">${spent > 0 ? money(spent) + ' spent' : 'no budget'}</span>`;
+        return `
       <div class="bp-row">
         <span class="bp-name">${row.category}${row.custom ? ` <button class="del-cat" data-cat="${row.category}" title="Delete category">×</button>` : ''}</span>
         <span class="bp-meta">${val}<input class="bp-input limit-input" type="number" min="0" step="10"
           value="${row.limit ?? ''}" data-cat="${row.category}" placeholder="—" title="Monthly limit" /></span>
         ${hasLimit ? `<span class="bp-track"><span class="bp-fill ${cls}" style="width:${w}%"></span></span>` : ''}
       </div>`;
-    })
-    .join('');
-  const obody = $('overview-budget-body');
-  obody.querySelectorAll('.limit-input').forEach((input) => input.addEventListener('change', () => saveBudget(input)));
-  obody.querySelectorAll('.del-cat').forEach((b) => b.addEventListener('click', () => deleteCategory(b.dataset.cat)));
+      })
+      .join('');
+    const obody = $('overview-budget-body');
+    obody.querySelectorAll('.limit-input').forEach((input) => input.addEventListener('change', () => saveBudget(input)));
+    obody.querySelectorAll('.del-cat').forEach((b) => b.addEventListener('click', () => deleteCategory(b.dataset.cat)));
+  }
+
   const totalBudget = o.categories.reduce((s, r) => s + (r.limit || 0), 0);
   $('overview-budget-total').textContent = money(totalBudget) + ' / mo';
+
+  // Clicking a month scopes both the donut and the budget panel; clicking it again reverts.
+  const onMonthSelect = (monthKey) => { showDonut(monthKey); renderBudgets(monthKey); };
+  showDonut(null);
+  renderBudgets(null);
+  $('overview-bars-title').textContent = `By month — ${o.activeYear}`;
+  renderMonthGrid('overview-bars', o.monthly, o.activeYear, onMonthSelect, false, true);
 
   // --- Recent activity peek ---
   $('recent-body').innerHTML =

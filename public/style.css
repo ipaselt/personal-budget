@@ -257,6 +257,7 @@ tfoot .total-row td { font-weight: 700; border-top: 1px solid var(--border); bor
 .bp-meta { display: flex; align-items: center; gap: 10px; }
 .bp-val { font-size: 12px; color: var(--muted); }
 .bp-val.over { color: var(--red); }
+.bp-val.good { color: var(--green); }
 .bp-val.none { color: var(--muted-2); }
 .bp-track { grid-column: 1 / -1; height: 5px; border-radius: 99px; background: var(--surface-2); overflow: hidden; }
 .bp-fill { height: 100%; border-radius: 99px; background: var(--accent); }
