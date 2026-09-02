@@ -36,6 +36,10 @@ const DEFAULT_BUCKETS = [
   'Miscellaneous',
 ];
 const SAVINGS_BUCKET = 'Savings/Investing';
+// Paying off a credit card moves your own money to settle a balance — it is NOT new
+// spending (the card's individual purchases already counted). Excluded from income and
+// spending totals, exactly like Transfer, so a two-account setup doesn't double-count.
+const CC_PAYMENT = 'Credit Card Payment';
 
 // Full category list = built-ins + any custom categories the user has added.
 const expenseBuckets = () => [...DEFAULT_BUCKETS, ...stmt.listCategories.all().map((r) => r.name)];
@@ -48,7 +52,11 @@ const RULES = [
   // Savings before Transfer so "TRANSFER TO SAVINGS" lands in Savings, not the generic Transfer bucket.
   ['Savings/Investing', ['SAVINGS', 'TO S0001', 'S0001', 'VANGUARD', 'FIDELITY', 'SCHWAB', 'ROBINHOOD', 'ACORNS', 'WEALTHFRONT', 'BETTERMENT', '401K', 'ROTH', ' IRA', 'BROKERAGE', 'COINBASE', 'INVEST']],
   ['Transfer', ['TRANSFER TO', 'TRANSFER FROM', 'XFER', 'ATM', 'CASH WITHDRAWAL', 'ONLINE BANKING', 'TO SHARE', 'FROM SHARE', 'OVERDRAFT', 'INTERNAL']],
-  ['Debt Payments', ['STUDENT LOAN', 'CARD PAYMENT', 'CREDIT CARD', 'CC PAYMENT', 'PAYMENT THANK', 'DISCOVER E-PAY', 'CHASE CREDIT', 'CAPITAL ONE', 'AMEX EPAYMENT', 'SOFI', 'AFFIRM', 'KLARNA', 'LOAN PMT', 'LOAN PAYMENT']],
+  // Credit-card payoffs — excluded from spending (the card's purchases already counted).
+  // Kept ahead of Debt Payments so card keywords land here, not in a spending bucket.
+  ['Credit Card Payment', ['CARD PAYMENT', 'CREDIT CARD', 'CC PAYMENT', 'PAYMENT THANK', 'DISCOVER E-PAY', 'CHASE CREDIT', 'CAPITAL ONE', 'AMEX EPAYMENT']],
+  // Real debt expenses (loans, buy-now-pay-later) — these DO count as spending.
+  ['Debt Payments', ['STUDENT LOAN', 'SOFI', 'AFFIRM', 'KLARNA', 'LOAN PMT', 'LOAN PAYMENT']],
   ['Housing (Rent/Mortgage)', ['RENT', 'MORTGAGE', 'HOA', 'PROPERTY MGMT', 'APARTMENT', 'LANDLORD', 'LEASING', 'ZILLOW']],
   ['Utilities', ['ELECTRIC', 'NATURAL GAS', 'GAS COMPANY', 'GAS UTILITY', 'UTILITY', 'UTILITIES', 'WATER', 'SEWER', 'PG&E', 'PGE', 'CON ED', 'CONED', 'DUKE ENERGY', 'NATIONAL GRID', 'PSE&G', 'PECO', 'DOMINION', 'WASTE', 'GARBAGE']],
   ['Phone/Internet', ['VERIZON', 'AT&T', 'T-MOBILE', 'TMOBILE', 'SPRINT', 'COMCAST', 'XFINITY', 'SPECTRUM', 'COX COMM', 'CENTURYLINK', 'GOOGLE FI', 'INTERNET', 'WIRELESS']],
@@ -74,6 +82,19 @@ export function categorize(description, isInflow) {
     for (const k of keys) if (d.includes(k)) return bucket;
   }
   return isInflow ? 'Income' : 'Miscellaneous';
+}
+
+// A merchant's stable key for learning: the uppercased description with a trailing
+// transaction date and redundant whitespace removed, so the SAME merchant matches
+// across dates. "CARD PURCHASE TIGER TOWN TAVERN   04-25-2026" and "…05-12-2026"
+// collapse to one key. Used only for merchant learning (store + match), never for
+// display or auto-categorization.
+export function merchantKey(name) {
+  return String(name || '')
+    .toUpperCase()
+    .replace(/\s+\d{1,4}[-/]\d{1,2}[-/]\d{2,4}\s*$/, '') // drop a trailing M-D-Y / Y-M-D date
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 // --- CSV parsing -----------------------------------------------------------
@@ -144,7 +165,7 @@ function computeTotals(txns) {
       if (t.amount > 0) income += t.amount;
       continue;
     }
-    if (cat === 'Transfer') continue; // moving your own money — ignore
+    if (cat === 'Transfer' || cat === CC_PAYMENT) continue; // own-money move / card payoff — ignore
     const spend = -t.amount; // outflow (negative) -> positive spend; refund (positive) reduces it
     spentByBucket[cat] = (spentByBucket[cat] || 0) + spend;
     if (cat !== SAVINGS_BUCKET) spending += spend;
@@ -314,7 +335,7 @@ function analyzeImport(buf, nameHint = '', { flip = false } = {}) {
   // several inflows that landed in spending categories (the tell-tale of mis-signed
   // purchases). Computed on the natural parse; the user confirms via the preview.
   const spendingInflow = base.records.filter(
-    (r) => r.amount > 0 && !['Income', 'Transfer', 'Savings/Investing'].includes(r.category)
+    (r) => r.amount > 0 && !['Income', 'Transfer', 'Savings/Investing', CC_PAYMENT].includes(r.category)
   ).length;
   const suggestFlip = isOfxCard || (spendingInflow >= 3 && spendingInflow > base.records.length * 0.4);
 
@@ -418,10 +439,17 @@ app.get('/api/status', (req, res) => {
   res.json({ hasData: (c.n || 0) > 0, count: c.n || 0, earliest: c.earliest, latest: c.latest });
 });
 
-// Apply every learned merchant rule to transactions that have no manual category yet.
+// Apply learned merchant rules to transactions that have no manual category yet.
+// Rules are keyed by merchantKey (date-insensitive), and stored patterns are re-keyed
+// on read, so a merchant learned on one date also categorizes its other-dated rows.
 function applyLearnedRules() {
-  for (const { pattern, category } of stmt.listLearned.all()) {
-    stmt.fillUserCatByPattern.run(category, pattern);
+  const byKey = new Map();
+  for (const { pattern, category } of stmt.listLearned.all()) byKey.set(merchantKey(pattern), category);
+  if (!byKey.size) return;
+  for (const t of stmt.allTxns.all()) {
+    if (t.user_category != null) continue; // never override a manual choice
+    const cat = byKey.get(merchantKey(t.name));
+    if (cat) stmt.setUserCategory.run(cat, t.transaction_id);
   }
 }
 
@@ -517,12 +545,13 @@ app.get('/api/overview', (req, res) => {
   const budgets = Object.fromEntries(stmt.listBudgets.all().map((b) => [b.category, b.monthly_limit]));
   const c = stmt.counts.get();
 
-  // Active-year slice — drives the budget-progress rows (spent vs a fairly-scaled
-  // budget) and the recent-activity peek on the redesigned Overview.
   const activeYear = getActiveYear();
-  const yearTxns = allTxns.filter((x) => x.date.startsWith(activeYear));
-  const yt = computeTotals(yearTxns);
-  const yMonthCount = new Set(yearTxns.map((x) => x.date.slice(0, 7))).size || 1;
+  // The Overview budget rows track ONE month — the latest month that has data — so the
+  // section shows the month you most recently imported and resets cleanly each new month.
+  // Monthly limit vs that month's actual spend; never a multi-month running total.
+  const budgetMonth = c.latest ? c.latest.slice(0, 7) : currentMonth();
+  const monthTxns = allTxns.filter((x) => x.date.startsWith(budgetMonth));
+  const mt = computeTotals(monthTxns);
   const recent = allTxns.slice(0, 6).map((x) => ({
     date: x.date,
     name: x.name,
@@ -541,13 +570,13 @@ app.get('/api/overview', (req, res) => {
     months: stmt.distinctMonths.all().map((r) => r.month),
     monthly: monthlySeries(),
     activeYear,
+    budgetMonth,
     archivedYears: stmt.listArchivedYears.all().map((r) => r.year),
     recent,
     categories: expenseBuckets().map((b) => ({
       category: b,
-      limit: budgets[b] ?? null,                                   // monthly limit (editable)
-      spent: round2(yt.spentByBucket[b] || 0),                     // active-year spend
-      yearLimit: budgets[b] != null ? round2(budgets[b] * yMonthCount) : null, // scaled for the year
+      limit: budgets[b] ?? null,                        // monthly limit (editable)
+      spent: round2(mt.spentByBucket[b] || 0),          // the budget month's actual spend
       custom: !DEFAULT_BUCKETS.includes(b),
     })),
   });
@@ -570,7 +599,7 @@ app.post('/api/category', (req, res) => {
   if (name.length > 40) return res.status(400).json({ error: 'Name is too long (max 40 chars).' });
   if (/[<>"'&]/.test(name)) return res.status(400).json({ error: 'Name cannot contain < > " \' or &.' });
   const taken = new Set(
-    [...DEFAULT_BUCKETS, 'Income', 'Transfer', ...stmt.listCategories.all().map((r) => r.name)]
+    [...DEFAULT_BUCKETS, 'Income', 'Transfer', CC_PAYMENT, ...stmt.listCategories.all().map((r) => r.name)]
       .map((s) => s.toLowerCase())
   );
   if (taken.has(name.toLowerCase()))
@@ -622,23 +651,29 @@ app.post('/api/clear_month', (req, res) => {
 });
 
 // Recategorize a transaction. Beyond fixing this row, we "learn the merchant":
-// remember UPPER(description) -> category and apply it to every matching row now
-// and on future imports, so a fix sticks for that merchant going forward.
+// remember merchantKey(description) -> category (date-insensitive) and apply it to every
+// transaction from that merchant now + on future imports, so a fix sticks going forward.
 app.post('/api/transaction_category', (req, res) => {
   const { transaction_id, user_category, scope } = req.body;
   if (!transaction_id) return res.status(400).json({ error: 'transaction_id required' });
   const row = stmt.getTxnName.get(transaction_id);
-  const pattern = row ? String(row.name || '').toUpperCase() : null;
+  const key = row ? merchantKey(row.name) : null;
   inTransaction(() => {
-    // scope 'all' (default): remember the merchant and fix every matching row now +
-    // on future imports. scope 'one': set just this transaction, no learned rule — for a
-    // one-off (e.g. a transfer) that shares a description with rows you want left alone.
-    if (user_category && pattern && scope !== 'one') {
-      stmt.upsertLearned.run(pattern, user_category); // remember the merchant
-      stmt.setUserCatByPattern.run(user_category, pattern); // fix every matching row now
+    // scope 'all' (default): remember the merchant (by date-insensitive key) and fix every
+    // transaction from that merchant now + on future imports. scope 'one': set just this
+    // transaction, no learned rule — for a one-off (e.g. a transfer) that shares a
+    // description with rows you want left alone.
+    if (user_category && key && scope !== 'one') {
+      // Collapse any stale variants (e.g. an older date-laden rule) into the one key.
+      for (const r of stmt.listLearned.all()) {
+        if (merchantKey(r.pattern) === key && r.pattern !== key) stmt.deleteLearnedPattern.run(r.pattern);
+      }
+      stmt.upsertLearned.run(key, user_category); // remember the merchant
+      for (const t of stmt.allTxns.all()) {       // fix every matching row now, any date
+        if (merchantKey(t.name) === key) stmt.setUserCategory.run(user_category, t.transaction_id);
+      }
     } else {
-      // A per-row override; survives re-imports and isn't touched by learned rules
-      // (fillUserCatByPattern only fills rows whose user_category is still NULL).
+      // A per-row override; survives re-imports and isn't touched by learned rules.
       stmt.setUserCategory.run(user_category || null, transaction_id);
     }
   });

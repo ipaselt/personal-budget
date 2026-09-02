@@ -135,14 +135,10 @@ export const stmt = {
   ),
   listLearned: db.prepare(`SELECT pattern, category FROM learned_categories`),
   deleteLearnedByCategory: db.prepare(`DELETE FROM learned_categories WHERE category = ?`),
-  // Force every row of a merchant to a category (used when you recategorize).
-  setUserCatByPattern: db.prepare(
-    `UPDATE transactions SET user_category = ? WHERE UPPER(name) = ?`
-  ),
-  // Fill only rows with no manual choice yet (used after import to apply learned rules).
-  fillUserCatByPattern: db.prepare(
-    `UPDATE transactions SET user_category = ? WHERE UPPER(name) = ? AND user_category IS NULL`
-  ),
+  deleteLearnedPattern: db.prepare(`DELETE FROM learned_categories WHERE pattern = ?`),
+  // Merchant matching (setUserCatByPattern/fillUserCatByPattern) now lives in server.js:
+  // it keys on merchantKey(name) (date-insensitive) rather than an exact UPPER(name),
+  // which SQL can't express here — see applyLearnedRules and /api/transaction_category.
 
   // --- Year archive + settings ---
   addArchivedYear: db.prepare(`INSERT OR IGNORE INTO archived_years (year) VALUES (?)`),

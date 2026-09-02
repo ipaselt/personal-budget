@@ -481,15 +481,16 @@ function txnRowHtml(t) {
     <td class="num ${isIn ? 'positive' : 'negative'}">${isIn ? '+' : '-'}${money(Math.abs(t.amount))}</td>`;
 }
 
-// Recategorizing to Transfer asks whether to apply to every matching row (+ future
-// imports) or just this one — so a self-transfer that shares a description with rows you
-// want left alone doesn't get learned globally. Every other category keeps the
-// merchant-learning default (apply to all) with no prompt.
+// How a recategorization is scoped:
+//  - Venmo: each one is a different person/occasion, so apply to JUST this transaction
+//    silently — never learned, so it can't mis-tag other Venmos.
+//  - Transfer: open the just-this-one / apply-to-all choice.
+//  - Everything else: apply to all matching rows (merchant learning), no prompt.
 let pendingCat = null; // { sel, id, category }
 
 function promptCategoryScope(sel) {
   pendingCat = { sel, id: sel.dataset.txn, category: sel.value };
-  // Only Transfer opens the choice; anything else applies to all merchant rows silently.
+  if (/VENMO/i.test(sel.dataset.name)) { applyCategoryScope('one'); return; } // never learn Venmo
   if (sel.value !== 'Transfer') { applyCategoryScope('all'); return; }
   $('cat-modal-text').innerHTML =
     `Set <b>${esc(sel.dataset.name)}</b> to <b>Transfer</b>.<br><br>` +
@@ -684,31 +685,32 @@ function renderOverview(o) {
   const insight = $('overview-insight');
   insight.hidden = !(cur.income || cur.spending);
   if (!insight.hidden) {
+    const bLabel = o.budgetMonth ? monthLabel(o.budgetMonth) : 'this month';
     const over = o.categories
-      .filter((c) => c.yearLimit != null && c.yearLimit > 0 && c.spent > c.yearLimit)
-      .sort((a, b) => b.spent - b.yearLimit - (a.spent - a.yearLimit));
-    const anyBudget = o.categories.some((c) => c.yearLimit != null && c.yearLimit > 0);
+      .filter((c) => c.limit != null && c.limit > 0 && c.spent > c.limit)
+      .sort((a, b) => b.spent - b.limit - (a.spent - a.limit));
+    const anyBudget = o.categories.some((c) => c.limit != null && c.limit > 0);
     let budgetMsg;
-    if (!anyBudget) budgetMsg = `no budgets are set for ${o.activeYear} yet.`;
-    else if (over.length === 0) budgetMsg = `every budget is on track for ${o.activeYear}.`;
+    if (!anyBudget) budgetMsg = `no budgets are set yet.`;
+    else if (over.length === 0) budgetMsg = `every budget is on track for ${bLabel}.`;
     else if (over.length === 1)
-      budgetMsg = `<span class="ins-warn">${over[0].category}</span> is over its ${o.activeYear} budget (${money(over[0].spent)} of ${money(over[0].yearLimit)}).`;
+      budgetMsg = `<span class="ins-warn">${over[0].category}</span> is over its ${bLabel} budget (${money(over[0].spent)} of ${money(over[0].limit)}).`;
     else
-      budgetMsg = `<span class="ins-warn">${over.length} budgets</span> are over for ${o.activeYear}: ${over.slice(0, 3).map((c) => c.category).join(', ')}.`;
+      budgetMsg = `<span class="ins-warn">${over.length} budgets</span> are over for ${bLabel}: ${over.slice(0, 3).map((c) => c.category).join(', ')}.`;
     insight.innerHTML = `<span class="ins-dot"></span><span>You've kept <span class="ins-good">${saved}%</span> of your income — ${budgetMsg}</span>`;
   }
 
-  // --- Budget-progress rows (this year's spend vs the budget) ---
-  $('overview-budget-title').textContent = `Budgets · ${o.activeYear}`;
+  // --- Budget-progress rows (this month's spend vs the monthly budget) ---
+  $('overview-budget-title').textContent = `Budgets · ${o.budgetMonth ? monthLabel(o.budgetMonth) : 'this month'}`;
   $('overview-budget-body').innerHTML = o.categories
     .map((row) => {
-      const hasLimit = row.yearLimit != null && row.yearLimit > 0;
-      const ratio = hasLimit ? row.spent / row.yearLimit : 0;
-      const over = hasLimit && row.spent > row.yearLimit;
+      const hasLimit = row.limit != null && row.limit > 0;
+      const ratio = hasLimit ? row.spent / row.limit : 0;
+      const over = hasLimit && row.spent > row.limit;
       const w = hasLimit ? Math.min(100, Math.round(ratio * 100)) : 0;
       const cls = over ? 'over' : ratio >= 1 ? 'full' : '';
       const val = hasLimit
-        ? `<span class="bp-val ${over ? 'over' : ''}">${money(row.spent)} / ${money(row.yearLimit)}</span>`
+        ? `<span class="bp-val ${over ? 'over' : ''}">${money(row.spent)} / ${money(row.limit)}</span>`
         : `<span class="bp-val none">${row.spent > 0 ? money(row.spent) + ' spent' : 'no budget'}</span>`;
       return `
       <div class="bp-row">
@@ -744,7 +746,7 @@ function renderPeriod(p) {
   $('view-overview').hidden = true;
   $('view-month').hidden = false;
 
-  categoryOptions = ['Income', 'Transfer', ...p.categories.map((c) => c.category)];
+  categoryOptions = ['Income', 'Transfer', 'Credit Card Payment', ...p.categories.map((c) => c.category)];
 
   const label = periodLabel(p.period);
   const span = p.monthCount > 1 ? ` · ${p.monthCount} months` : '';
