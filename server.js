@@ -54,7 +54,9 @@ const RULES = [
   ['Transfer', ['TRANSFER TO', 'TRANSFER FROM', 'XFER', 'ATM', 'CASH WITHDRAWAL', 'ONLINE BANKING', 'TO SHARE', 'FROM SHARE', 'OVERDRAFT', 'INTERNAL']],
   // Credit-card payoffs — excluded from spending (the card's purchases already counted).
   // Kept ahead of Debt Payments so card keywords land here, not in a spending bucket.
-  ['Credit Card Payment', ['CARD PAYMENT', 'CREDIT CARD', 'CC PAYMENT', 'PAYMENT THANK', 'DISCOVER E-PAY', 'CHASE CREDIT', 'CAPITAL ONE', 'AMEX EPAYMENT']],
+  // Payment-intent tokens only — NOT bare issuer names like "CAPITAL ONE", which also
+  // appear in real purchases (e.g. a Capital One Café) and would wrongly hide spending.
+  ['Credit Card Payment', ['CARD PAYMENT', 'CREDIT CARD', 'CC PAYMENT', 'PAYMENT THANK', 'DISCOVER E-PAY', 'CHASE CREDIT', 'AMEX EPAYMENT']],
   // Real debt expenses (loans, buy-now-pay-later) — these DO count as spending.
   ['Debt Payments', ['STUDENT LOAN', 'SOFI', 'AFFIRM', 'KLARNA', 'LOAN PMT', 'LOAN PAYMENT']],
   ['Housing (Rent/Mortgage)', ['RENT', 'MORTGAGE', 'HOA', 'PROPERTY MGMT', 'APARTMENT', 'LANDLORD', 'LEASING', 'ZILLOW']],
